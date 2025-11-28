@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PixelBead - 拼豆图纸生成器</title>
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        width: 100%;
+        background-color: #0a1f1a;
+      }
+
+      #app {
+        width: 100%;
+        height: 100%;
+      }
+
+      .loading {
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        background: linear-gradient(135deg, #0a1f1a, #0d2820);
+        color: #00ffcc;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+      }
+
+      .loading-spinner {
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        border: 4px solid rgba(255, 255, 255, 0.2);
+        border-top-color: #00ffcc;
+        animation: spin 1s linear infinite;
+        margin-bottom: 16px;
+      }
+
+      @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+    </style>
+  </head>
+  <body>
+    <noscript>请开启 JavaScript 以运行 PixelBead。</noscript>
+    <div id="app">
+      <div class="loading" id="global-loading">
+        <div class="loading-spinner"></div>
+        <div>PixelBead 工坊正在装载...</div>
+      </div>
+    </div>
+    <script>
+      function hideGlobalLoading() {
+        const loadingEl = document.getElementById('global-loading');
+        if (loadingEl && !loadingEl.classList.contains('hidden')) {
+          loadingEl.style.opacity = '0';
+          loadingEl.style.transition = 'opacity 300ms ease';
+          setTimeout(() => {
+            loadingEl.remove();
+          }, 320);
+        }
+      }
+
+      document.addEventListener('UniAppJSBridgeReady', hideGlobalLoading);
+      document.addEventListener('uni-app-view-ready', hideGlobalLoading);
+      window.addEventListener('load', () => {
+        setTimeout(hideGlobalLoading, 1200);
+      });
+    </script>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,52 @@
+{
+  "name": "pixelbead",
+  "version": "1.0.0",
+  "description": "PixelBead - 拼豆图纸生成器",
+  "main": "main.js",
+  "scripts": {
+    "dev:h5": "vite --mode development",
+    "dev:mp-weixin": "vite build --mode development --platform mp-weixin",
+    "build:h5": "vite build --mode production",
+    "build:mp-weixin": "vite build --mode production --platform mp-weixin"
+  },
+  "keywords": [
+    "pixelbead",
+    "拼豆",
+    "图纸生成器",
+    "uniapp"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@dcloudio/uni-app": "3.0.0-alpha-4080620251107001",
+    "@dcloudio/uni-app-plus": "3.0.0-alpha-4080620251107001",
+    "@dcloudio/uni-components": "3.0.0-alpha-4080620251107001",
+    "@dcloudio/uni-h5": "3.0.0-alpha-4080620251107001",
+    "@dcloudio/uni-mp-alipay": "3.0.0-alpha-4080620251107001",
+    "@dcloudio/uni-mp-baidu": "3.0.0-alpha-4080620251107001",
+    "@dcloudio/uni-mp-jd": "3.0.0-alpha-4080620251107001",
+    "@dcloudio/uni-mp-kuaishou": "3.0.0-alpha-4080620251107001",
+    "@dcloudio/uni-mp-lark": "3.0.0-alpha-4080620251107001",
+    "@dcloudio/uni-mp-qq": "3.0.0-alpha-4080620251107001",
+    "@dcloudio/uni-mp-toutiao": "3.0.0-alpha-4080620251107001",
+    "@dcloudio/uni-mp-weixin": "3.0.0-alpha-4080620251107001",
+    "@dcloudio/uni-mp-xhs": "3.0.0-alpha-4080620251107001",
+    "@dcloudio/uni-quickapp-webview": "3.0.0-alpha-4080620251107001",
+    "vue": "^3.4.21",
+    "vue-i18n": "^9.9.1"
+  },
+  "devDependencies": {
+    "@dcloudio/types": "^3.4.8",
+    "@dcloudio/uni-automator": "3.0.0-alpha-4080620251107001",
+    "@dcloudio/uni-cli-shared": "3.0.0-alpha-4080620251107001",
+    "@dcloudio/uni-stacktracey": "3.0.0-alpha-4080620251107001",
+    "@dcloudio/vite-plugin-uni": "3.0.0-alpha-4080620251107001",
+    "@types/node": "^20.11.5",
+    "@vitejs/plugin-vue": "^6.0.2",
+    "@vue/runtime-core": "^3.4.21",
+    "sass": "^1.70.0",
+    "typescript": "^5.3.3",
+    "vite": "5.2.8",
+    "vue-tsc": "^1.8.27"
+  }
+}

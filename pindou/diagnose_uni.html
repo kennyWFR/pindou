@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Uni-app 深度诊断</title>
+  <script src="https://unpkg.com/vue@3.4.21/dist/vue.global.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      background: #f8f9fa;
+      line-height: 1.6;
+    }
+    .diagnose-container {
+      max-width: 1000px;
+      margin: 0 auto;
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    .test-section {
+      margin-bottom: 25px;
+      padding: 15px;
+      border-left: 4px solid #007bff;
+      background: #f8f9fa;
+      border-radius: 4px;
+    }
+    .success { border-left-color: #28a745; background: #d4edda; }
+    .error { border-left-color: #dc3545; background: #f8d7da; }
+    .warning { border-left-color: #ffc107; background: #fff3cd; }
+    .info { border-left-color: #17a2b8; background: #d1ecf1; }
+    .test-title {
+      font-size: 18px;
+      font-weight: bold;
+      margin-bottom: 10px;
+      color: #333;
+    }
+    .test-result {
+      font-family: monospace;
+      background: #f8f9fa;
+      padding: 10px;
+      border-radius: 4px;
+      border: 1px solid #dee2e6;
+      white-space: pre-wrap;
+      max-height: 150px;
+      overflow-y: auto;
+      margin: 10px 0;
+    }
+    button {
+      background: #007bff;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      margin: 5px;
+      font-size: 14px;
+    }
+    button:hover { background: #0056b3; }
+    button.success { background: #28a745; }
+    button.error { background: #dc3545; }
+    button.warning { background: #ffc107; color: #212529; }
+    .progress-bar {
+      width: 100%;
+      height: 20px;
+      background: #e9ecef;
+      border-radius: 10px;
+      overflow: hidden;
+      margin: 10px 0;
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #28a745, #20c997);
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+    .summary {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: white;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      min-width: 250px;
+      font-size: 14px;
+    }
+    .summary-item {
+      margin: 8px 0;
+      padding: 5px;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div id="diagnose-app">
+    <!-- 诊断摘要 -->
+    <div class="summary">
+      <h3>🔍 诊断进度</h3>
+      <div class="summary-item success">Vue.js: {{ vueStatus }}</div>
+      <div class="summary-item" :class="uniStatus.class">{{ uniStatus.text }}</div>
+      <div class="summary-item" :class="scriptStatus.class">{{ scriptStatus.text }}</div>
+      <div class="summary-item" :class="apiStatus.class">{{ apiStatus.text }}</div>
+      <div class="progress-bar">
+        <div class="progress-fill" :style="{ width: progress + '%' }"></div>
+      </div>
+      <div style="text-align: center; margin-top: 10px; font-weight: bold;">
+        {{ Math.round(progress) }}% 完成
+      </div>
+    </div>
+
+    <div class="diagnose-container">
+      <h1>🔬 Uni-app 深度诊断工具</h1>
+
+      <!-- 1. Vue.js 检查 -->
+      <div class="test-section success">
+        <div class="test-title">1. ✅ Vue.js 基础检查</div>
+        <div class="test-result">
+Vue 版本: {{ vueVersion }}
+Vue 全局对象: {{ typeof Vue }}
+window.Vue: {{ typeof window.Vue }}
+Vue Composition API: {{ typeof Vue?.createApp ? '可用' : '不可用' }}
+        </div>
+      </div>
+
+      <!-- 2. Uni-app 脚本加载检查 -->
+      <div class="test-section" :class="scriptStatus.class">
+        <div class="test-title">{{ scriptStatus.icon }} Uni-app 脚本加载检查</div>
+        <div class="test-result">{{ scriptStatus.details }}</div>
+        <button @click="testScriptLoading">重新测试脚本加载</button>
+        <button @click="loadUniManually">手动加载 Uni-app</button>
+      </div>
+
+      <!-- 3. Uni-app API 检查 -->
+      <div class="test-section" :class="apiStatus.class">
+        <div class="test-title">{{ apiStatus.icon }} Uni-app API 检查</div>
+        <div class="test-result">{{ apiStatus.details }}</div>
+        <button @click="testUniAPI">测试 Uni-app API</button>
+      </div>
+
+      <!-- 4. 网络请求测试 -->
+      <div class="test-section info">
+        <div class="test-title">4. 🌐 网络请求测试</div>
+        <div class="test-result">{{ networkResults }}</div>
+        <button @click="testNetworkRequests">测试网络请求</button>
+      </div>
+
+      <!-- 5. 控制台日志 -->
+      <div class="test-section">
+        <div class="test-title">5. 📝 控制台日志</div>
+        <div class="test-result" id="console-output">等待日志...</div>
+        <button @click="clearConsole">清空日志</button>
+        <button @click="exportLogs">导出日志</button>
+      </div>
+
+      <!-- 6. 解决方案 -->
+      <div class="test-section warning" v-if="!allTestsPassed">
+        <div class="test-title">6. 💡 解决方案建议</div>
+        <div class="test-result">{{ solutions }}</div>
+        <button class="success" @click="applySolution" v-if="hasSolution">应用解决方案</button>
+        <button @click="goToMainApp" v-if="canProceed">继续到主应用</button>
+      </div>
+
+      <!-- 7. 成功状态 -->
+      <div class="test-section success" v-if="allTestsPassed">
+        <div class="test-title">7. 🎉 所有测试通过！</div>
+        <div class="test-result">
+恭喜！所有组件都正常工作。
+现在可以享受完整的 PixelBead 功能了！
+
+✅ Vue.js 3.4.21
+✅ Uni-app H5 API
+✅ 脚本加载正常
+✅ API 调用正常
+        </div>
+        <button class="success" @click="goToMainApp">🚀 进入 PixelBead 工坊</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const { createApp, ref, onMounted, computed } = Vue;
+
+    createApp({
+      setup() {
+        // 状态变量
+        const vueVersion = ref('检测中...');
+        const scriptStatus = ref({ class: 'warning', icon: '⏳', text: '脚本加载中...', details: '正在检查脚本加载状态...' });
+        const apiStatus = ref({ class: 'warning', icon: '⏳', text: 'API 检查中...', details: '正在检查 Uni-app API...' });
+        const networkResults = ref('未测试');
+        const solutions = ref('正在分析问题...');
+        const hasSolution = ref(false);
+        const canProceed = ref(false);
+
+        // 进度计算
+        const progress = computed(() => {
+          let score = 0;
+          if (vueVersion.value !== '检测中...') score += 25;
+          if (scriptStatus.value.class !== 'warning') score += 25;
+          if (apiStatus.value.class !== 'warning') score += 25;
+          if (networkResults.value !== '未测试') score += 25;
+          return score;
+        });
+
+        // 计算状态
+        const vueStatus = computed(() => vueVersion.value);
+        const uniStatus = computed(() => ({
+          class: scriptStatus.value.class === 'success' ? 'success' : 'error',
+          text: scriptStatus.value.class === 'success' ? '✅ 已加载' : '❌ 未加载'
+        }));
+
+        const allTestsPassed = computed(() =>
+          vueVersion.value !== '检测中...' &&
+          scriptStatus.value.class === 'success' &&
+          apiStatus.value.class === 'success'
+        );
+
+        // 控制台日志
+        let consoleMessages = [];
+        const originalLog = console.log;
+        const originalError = console.error;
+        const originalWarn = console.warn;
+
+        console.log = function(...args) {
+          consoleMessages.push(['log', ...args]);
+          updateConsole();
+          originalLog.apply(console, args);
+        };
+
+        console.error = function(...args) {
+          consoleMessages.push(['error', ...args]);
+          updateConsole();
+          originalError.apply(console, args);
+        };
+
+        console.warn = function(...args) {
+          consoleMessages.push(['warn', ...args]);
+          updateConsole();
+          originalWarn.apply(console, args);
+        };
+
+        function updateConsole() {
+          const output = document.getElementById('console-output');
+          if (output) {
+            output.innerHTML = consoleMessages.slice(-15).map(([type, ...args]) => {
+              const color = type === 'error' ? '#dc3545' : type === 'warn' ? '#ffc107' : '#28a745';
+              return `<span style="color: ${color}">[${type.toUpperCase()}]</span> ${args.join(' ')}`;
+            }).join('\n');
+            output.scrollTop = output.scrollHeight;
+          }
+        }
+
+        function clearConsole() {
+          consoleMessages = [];
+          updateConsole();
+        }
+
+        function exportLogs() {
+          const logs = consoleMessages.map(([type, ...args]) => `[${type.toUpperCase()}] ${args.join(' ')}`).join('\n');
+          const blob = new Blob([logs], { type: 'text/plain' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'uni-app-diagnostic-logs.txt';
+          a.click();
+          URL.revokeObjectURL(url);
+        }
+
+        // 测试函数
+        function testVue() {
+          console.log('=== Vue.js 检查 ===');
+          try {
+            if (typeof Vue !== 'undefined') {
+              vueVersion.value = Vue.version;
+              console.log(`✅ Vue.js ${Vue.version} 已加载`);
+            } else {
+              vueVersion.value = '未找到';
+              console.error('❌ Vue.js 未加载');
+            }
+          } catch (e) {
+            vueVersion.value = '错误: ' + e.message;
+            console.error('Vue.js 检查失败:', e);
+          }
+        }
+
+        async function testScriptLoading() {
+          console.log('=== Uni-app 脚本加载测试 ===');
+          scriptStatus.value = { class: 'warning', icon: '⏳', text: '测试中...', details: '正在测试脚本加载...' };
+
+          // 检查是否已经加载
+          if (typeof uni !== 'undefined') {
+            scriptStatus.value = {
+              class: 'success',
+              icon: '✅',
+              text: '已加载',
+              details: 'Uni-app 脚本已存在于全局作用域中'
+            };
+            console.log('✅ Uni-app 脚本已存在');
+            return;
+          }
+
+          // 测试不同加载方式
+          const testUrls = [
+            '/@fs/Users/wangjunbo.kennyw/Desktop/pindou/node_modules/@dcloudio/uni-h5/dist/uni-h5.es.js',
+            '/node_modules/@dcloudio/uni-h5/dist/uni-h5.es.js',
+            './node_modules/@dcloudio/uni-h5/dist/uni-h5.es.js'
+          ];
+
+          for (const url of testUrls) {
+            try {
+              console.log(`尝试加载: ${url}`);
+              await import(url);
+              scriptStatus.value = {
+                class: 'success',
+                icon: '✅',
+                text: '加载成功',
+                details: `通过路径 "${url}" 成功加载 Uni-app 脚本`
+              };
+              console.log(`✅ 通过 ${url} 加载成功`);
+              return;
+            } catch (e) {
+              console.warn(`❌ ${url} 加载失败:`, e.message);
+            }
+          }
+
+          scriptStatus.value = {
+            class: 'error',
+            icon: '❌',
+            text: '加载失败',
+            details: '所有加载路径都失败了。可能需要检查：\n1. node_modules 是否完整\n2. Vite 开发服务器配置\n3. 文件路径是否正确'
+          };
+          console.error('❌ 所有脚本加载方式都失败了');
+        }
+
+        function testUniAPI() {
+          console.log('=== Uni-app API 测试 ===');
+          apiStatus.value = { class: 'warning', icon: '⏳', text: '测试中...', details: '正在测试 Uni-app API...' };
+
+          if (typeof uni === 'undefined') {
+            apiStatus.value = {
+              class: 'error',
+              icon: '❌',
+              text: 'API 不可用',
+              details: 'uni 全局对象不存在，无法使用 Uni-app API'
+            };
+            console.error('❌ uni 全局对象不存在');
+            return;
+          }
+
+          let details = '✅ uni 全局对象存在\n';
+          let hasErrors = false;
+
+          // 测试基础 API
+          const apis = [
+            { name: 'showToast', api: uni.showToast },
+            { name: 'navigateTo', api: uni.navigateTo },
+            { name: 'getSystemInfoSync', api: uni.getSystemInfoSync },
+            { name: 'createCanvasContext', api: uni.createCanvasContext }
+          ];
+
+          apis.forEach(({ name, api }) => {
+            if (typeof api === 'function') {
+              details += `✅ ${name} 可用\n`;
+            } else {
+              details += `❌ ${name} 不可用\n`;
+              hasErrors = true;
+            }
+          });
+
+          // 测试系统信息
+          try {
+            const systemInfo = uni.getSystemInfoSync();
+            details += `\n📱 系统信息:\n  平台: ${systemInfo.platform}\n  版本: ${systemInfo.version || '未知'}`;
+          } catch (e) {
+            details += `\n❌ 系统信息获取失败: ${e.message}`;
+            hasErrors = true;
+          }
+
+          apiStatus.value = {
+            class: hasErrors ? 'warning' : 'success',
+            icon: hasErrors ? '⚠️' : '✅',
+            text: hasErrors ? '部分可用' : '完全可用',
+            details: details
+          };
+
+          console.log(hasErrors ? '⚠️' : '✅', 'Uni-app API 测试完成');
+        }
+
+        async function testNetworkRequests() {
+          console.log('=== 网络请求测试 ===');
+          networkResults.value = '正在测试网络请求...';
+
+          const tests = [
+            { name: 'Uni-app 脚本文件', url: '/node_modules/@dcloudio/uni-h5/dist/uni-h5.es.js' },
+            { name: 'Vue 运行时', url: 'https://unpkg.com/vue@3.4.21/dist/vue.global.js' },
+            { name: '本地开发服务器', url: '/' }
+          ];
+
+          let results = '';
+          for (const test of tests) {
+            try {
+              const response = await fetch(test.url, { method: 'HEAD' });
+              if (response.ok) {
+                results += `✅ ${test.name}: 可访问\n`;
+              } else {
+                results += `⚠️ ${test.name}: HTTP ${response.status}\n`;
+              }
+            } catch (e) {
+              results += `❌ ${test.name}: ${e.message}\n`;
+            }
+          }
+
+          networkResults.value = results;
+          console.log('网络请求测试完成');
+        }
+
+        async function loadUniManually() {
+          console.log('=== 手动加载 Uni-app ===');
+
+          // 移除现有的 uni-app 脚本（如果存在）
+          const existingScript = document.querySelector('script[src*="uni-h5"]');
+          if (existingScript) {
+            existingScript.remove();
+          }
+
+          // 创建新的脚本元素
+          const script = document.createElement('script');
+          script.type = 'module';
+
+          script.innerHTML = `
+            try {
+              // 尝试多种加载方式
+              const loadAttempts = [
+                () => import('/@fs/Users/wangjunbo.kennyw/Desktop/pindou/node_modules/@dcloudio/uni-h5/dist/uni-h5.es.js'),
+                () => import('/node_modules/@dcloudio/uni-h5/dist/uni-h5.es.js'),
+                () => import('./node_modules/@dcloudio/uni-h5/dist/uni-h5.es.js')
+              ];
+
+              for (const attempt of loadAttempts) {
+                try {
+                  await attempt();
+                  console.log('✅ Uni-app 手动加载成功');
+                  window.dispatchEvent(new CustomEvent('uni-loaded'));
+                  return;
+                } catch (e) {
+                  console.warn('加载尝试失败:', e.message);
+                }
+              }
+
+              throw new Error('所有加载方式都失败了');
+
+            } catch (error) {
+              console.error('❌ Uni-app 手动加载失败:', error);
+              // 创建fallback uni对象
+              window.uni = {
+                showToast: (options) => console.log('模拟 showToast:', options),
+                navigateTo: (options) => console.log('模拟 navigateTo:', options),
+                getSystemInfoSync: () => ({ platform: 'h5', version: 'fallback', status: 'simulated' })
+              };
+              console.log('⚠️ 使用模拟的 uni 对象');
+              window.dispatchEvent(new CustomEvent('uni-fallback'));
+            }
+          `;
+
+          document.head.appendChild(script);
+
+          // 监听加载结果
+          window.addEventListener('uni-loaded', () => {
+            console.log('收到 uni-loaded 事件');
+            testScriptLoading();
+          });
+
+          window.addEventListener('uni-fallback', () => {
+            console.log('收到 uni-fallback 事件');
+            scriptStatus.value = {
+              class: 'warning',
+              icon: '⚠️',
+              text: '使用模拟对象',
+              details: 'Uni-app 脚本加载失败，使用模拟对象代替'
+            };
+          });
+        }
+
+        function applySolution() {
+          console.log('=== 应用解决方案 ===');
+          solutions.value = '正在应用解决方案...';
+
+          // 根据诊断结果应用相应的解决方案
+          if (scriptStatus.value.class === 'error') {
+            loadUniManually();
+            solutions.value = '已尝试手动加载 Uni-app 脚本';
+          } else if (apiStatus.value.class === 'error') {
+            solutions.value = 'API 问题可能需要重新配置 Vite 或检查依赖版本';
+          } else {
+            solutions.value = '所有测试都通过了！';
+          }
+
+          hasSolution.value = false; // 已经应用了解决方案
+        }
+
+        function goToMainApp() {
+          window.location.href = '/';
+        }
+
+        function updateSolutions() {
+          let solutionText = '';
+
+          if (scriptStatus.value.class === 'error') {
+            solutionText += '🔧 脚本加载失败解决方案:\n';
+            solutionText += '1. 检查 node_modules 是否完整\n';
+            solutionText += '2. 尝试手动加载 Uni-app 脚本\n';
+            solutionText += '3. 检查 Vite 开发服务器配置\n\n';
+            hasSolution.value = true;
+          }
+
+          if (apiStatus.value.class === 'error') {
+            solutionText += '🔧 API 不可用解决方案:\n';
+            solutionText += '1. 确认 Uni-app 脚本已正确加载\n';
+            solutionText += '2. 检查全局变量污染\n';
+            solutionText += '3. 尝试重新启动开发服务器\n\n';
+            hasSolution.value = true;
+          }
+
+          if (networkResults.value.includes('❌')) {
+            solutionText += '🔧 网络问题解决方案:\n';
+            solutionText += '1. 检查防火墙设置\n';
+            solutionText += '2. 确认开发服务器正在运行\n';
+            solutionText += '3. 尝试不同的网络环境\n\n';
+          }
+
+          if (solutionText === '') {
+            solutionText = '🎉 没有发现明显问题！所有测试都通过了。';
+            canProceed.value = true;
+          }
+
+          solutions.value = solutionText;
+        }
+
+        // 监听状态变化，更新解决方案
+        const watcher = () => {
+          setTimeout(updateSolutions, 100);
+        };
+
+        // 页面加载时的初始化
+        onMounted(() => {
+          console.log('🔬 Uni-app 深度诊断工具已启动');
+
+          // 延迟执行测试，给页面加载时间
+          setTimeout(() => {
+            testVue();
+            testScriptLoading();
+            testUniAPI();
+            testNetworkRequests();
+            updateSolutions();
+          }, 1000);
+
+          // 监听状态变化
+          setInterval(watcher, 2000);
+        });
+
+        return {
+          vueVersion,
+          vueStatus,
+          uniStatus,
+          scriptStatus,
+          apiStatus,
+          networkResults,
+          solutions,
+          hasSolution,
+          canProceed,
+          progress,
+          allTestsPassed,
+          testScriptLoading,
+          testUniAPI,
+          testNetworkRequests,
+          loadUniManually,
+          applySolution,
+          goToMainApp,
+          clearConsole,
+          exportLogs
+        };
+      }
+    }).mount('#diagnose-app');
+  </script>
+</body>
+</html>

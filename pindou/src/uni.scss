@@ -1,0 +1,47 @@
+/**
+ * Uni-app 全局 SCSS 变量
+ */
+
+/* 颜色变量 */
+$uni-primary: #6C5CE7;
+$uni-primary-light: #A29BFE;
+$uni-primary-dark: #5F4FD1;
+
+$uni-success: #00B894;
+$uni-warning: #FDCB6E;
+$uni-error: #D63031;
+
+$uni-text-color: #2D3436;
+$uni-text-color-grey: #636E72;
+$uni-text-color-light: #B2BEC3;
+
+$uni-bg-color: #FFFFFF;
+$uni-bg-color-grey: #F8F9FA;
+$uni-bg-color-hover: #F5F5F5;
+
+$uni-border-color: #DFE6E9;
+
+/* 间距变量 */
+$uni-spacing-sm: 16rpx;
+$uni-spacing-base: 24rpx;
+$uni-spacing-lg: 32rpx;
+$uni-spacing-xl: 48rpx;
+
+/* 圆角变量 */
+$uni-border-radius-sm: 8rpx;
+$uni-border-radius-base: 12rpx;
+$uni-border-radius-lg: 16rpx;
+$uni-border-radius-circle: 50%;
+
+/* 字体大小 */
+$uni-font-size-xs: 20rpx;
+$uni-font-size-sm: 24rpx;
+$uni-font-size-base: 28rpx;
+$uni-font-size-lg: 32rpx;
+$uni-font-size-xl: 36rpx;
+
+/* 阴影 */
+$uni-shadow-sm: 0 2rpx 8rpx rgba(0, 0, 0, 0.05);
+$uni-shadow-base: 0 4rpx 16rpx rgba(0, 0, 0, 0.08);
+$uni-shadow-lg: 0 8rpx 32rpx rgba(0, 0, 0, 0.12);
+
