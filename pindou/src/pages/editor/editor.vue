@@ -134,14 +134,17 @@
       <view class="canvas-actions">
         <view class="actions-title">
           <text class="actions-label">画布工具</text>
-          <text class="actions-tip">快速切换查看模式</text>
         </view>
         <view class="tool-row">
           <view class="tool-btn" @tap="toggleColorCodes">
             <text class="tool-icon">{{ showCodes ? '🚫' : '🔠' }}</text>
             <text class="tool-label">{{ showCodes ? '隐藏色号' : '显示色号' }}</text>
           </view>
-          <view class="tool-btn" @tap="toggleAlgorithm">
+          <view class="tool-btn" @tap="toggleDenseLayout">
+            <text class="tool-icon">{{ denseLayoutIcon }}</text>
+            <text class="tool-label">{{ denseLayoutLabel }}</text>
+          </view>
+          <view v-if="imageType === 'standard'" class="tool-btn" @tap="toggleAlgorithm">
             <text class="tool-icon">{{ colorAlgorithm === 'enhanced' ? '✨' : '🧠' }}</text>
             <text class="tool-label">{{ algorithmLabel }}</text>
           </view>
@@ -149,7 +152,7 @@
             <text class="tool-icon">{{ beadShapeIcon }}</text>
             <text class="tool-label">{{ beadShapeLabel }}</text>
           </view>
-          <view class="tool-btn" @tap="toggleStyle">
+          <view v-if="imageType === 'pixel'" class="tool-btn" @tap="toggleStyle">
             <text class="tool-icon">{{ styleIcon }}</text>
             <text class="tool-label">{{ styleLabel }}</text>
           </view>
@@ -352,6 +355,15 @@ const brandKey = ref<BrandKey>('mard');
 const imagePath = ref<string>('');
 const gridWidth = ref<number>(40);
 const gridHeight = ref<number>(0);
+const imageType = ref<'standard' | 'pixel'>('standard');
+
+// 像素图片模式参数
+const pixelBlockSizeRatio = ref<number>(0.01); // 网格宽度相对于图片宽度的比例，默认1%
+const pixelOffsetX = ref<number>(0);
+const pixelOffsetY = ref<number>(0);
+const pixelScale = ref<number>(1);
+const pixelImageWidth = ref<number>(0);
+const pixelImageHeight = ref<number>(0);
 
 // 处理状态
 const isProcessing = ref<boolean>(true);
@@ -399,6 +411,7 @@ const activeTouchCount = ref<number>(0);
 let zoomCooldownUntil = 0;
 const colorAlgorithm = ref<ColorAlgorithm>('standard');
 const beadShape = ref<'circle' | 'square'>('square');
+const denseLayout = ref<boolean>(true); // true = 无间隙（密集排列，默认），false = 有间隙
 
 // ============================================
 // 计算属性
@@ -434,6 +447,8 @@ const beadShapeIcon = computed(() =>
 const styleEnhanced = computed(() => showGrid.value && showShading.value);
 const styleLabel = computed(() => (styleEnhanced.value ? '纯色豆子' : '精细网格'));
 const styleIcon = computed(() => (styleEnhanced.value ? '✔️' : '🔲'));
+const denseLayoutLabel = computed(() => denseLayout.value ? '稀疏排列' : '密集排列');
+const denseLayoutIcon = computed(() => denseLayout.value ? '📏' : '🔗');
 
 const colorPickerStyle = computed(() => {
   return {
@@ -460,11 +475,34 @@ onMounted(() => {
   if (options.image) {
     imagePath.value = decodeURIComponent(options.image);
   }
+  if (options.type) {
+    imageType.value = options.type as 'standard' | 'pixel';
+  }
+  if (options.pixelBlockSizeRatio) {
+    pixelBlockSizeRatio.value = parseFloat(options.pixelBlockSizeRatio);
+  }
+  if (options.pixelOffsetX) {
+    pixelOffsetX.value = parseFloat(options.pixelOffsetX);
+  }
+  if (options.pixelOffsetY) {
+    pixelOffsetY.value = parseFloat(options.pixelOffsetY);
+  }
+  if (options.pixelScale) {
+    pixelScale.value = parseFloat(options.pixelScale);
+  }
+  if (options.pixelImageWidth) {
+    pixelImageWidth.value = parseInt(options.pixelImageWidth);
+  }
+  if (options.pixelImageHeight) {
+    pixelImageHeight.value = parseInt(options.pixelImageHeight);
+  }
   
   console.log('编辑器参数:', {
     brandKey: brandKey.value,
+    imageType: imageType.value,
     gridWidth: gridWidth.value,
-    imagePath: imagePath.value
+    imagePath: imagePath.value,
+    pixelBlockSizeRatio: pixelBlockSizeRatio.value
   });
   
   initializeEditor();
@@ -628,13 +666,64 @@ async function loadAndProcessImage(): Promise<void> {
   const imageInfo = await getImageInfo(imagePath.value);
   console.log('图片信息:', imageInfo);
   
-  const aspectRatio = imageInfo.height / imageInfo.width;
-  gridHeight.value = Math.round(gridWidth.value * aspectRatio);
+  if (imageType.value === 'pixel') {
+    // 像素图片模式：使用基于正方形网格的切割
+    await loadAndProcessPixelImage(imageInfo);
+  } else {
+    // 标准图片模式：原有逻辑
+    const aspectRatio = imageInfo.height / imageInfo.width;
+    gridHeight.value = Math.round(gridWidth.value * aspectRatio);
+    
+    console.log('网格尺寸:', gridWidth.value, 'x', gridHeight.value);
+    
+    processCanvas.width = gridWidth.value * dpr;
+    processCanvas.height = gridHeight.value * dpr;
+    processCtx.scale(dpr, dpr);
+    
+    const img = typeof processCanvas.createImage === 'function'
+      ? processCanvas.createImage()
+      : new Image();
+    
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => {
+        console.log('图片加载成功');
+        
+        processCtx.drawImage(img, 0, 0, gridWidth.value, gridHeight.value);
+        
+        const imageData = processCtx.getImageData(
+          0, 
+          0, 
+          gridWidth.value * dpr, 
+          gridHeight.value * dpr
+        );
+        
+        console.log('开始像素化处理...');
+        progressText.value = '0%';
+        
+        originalImageData = cloneImageData(imageData);
+        pixelateAndMatch(cloneImageData(imageData));
+        
+        resolve();
+      };
+      
+      img.onerror = (err: any) => {
+        console.error('图片加载失败:', err);
+        reject(new Error('图片加载失败'));
+      };
+      
+      img.src = imagePath.value;
+    });
+  }
+}
+
+// 像素图片模式：基于正方形网格切割
+async function loadAndProcessPixelImage(imageInfo: UniApp.GetImageInfoSuccessData): Promise<void> {
+  console.log('开始像素图片处理...');
+  progressText.value = '0%';
   
-  console.log('网格尺寸:', gridWidth.value, 'x', gridHeight.value);
-  
-  processCanvas.width = gridWidth.value * dpr;
-  processCanvas.height = gridHeight.value * dpr;
+  // 将图片绘制到canvas上（使用原始尺寸）
+  processCanvas.width = imageInfo.width * dpr;
+  processCanvas.height = imageInfo.height * dpr;
   processCtx.scale(dpr, dpr);
   
   const img = typeof processCanvas.createImage === 'function'
@@ -643,22 +732,111 @@ async function loadAndProcessImage(): Promise<void> {
   
   await new Promise<void>((resolve, reject) => {
     img.onload = () => {
-      console.log('图片加载成功');
+      console.log('像素图片加载成功');
       
-      processCtx.drawImage(img, 0, 0, gridWidth.value, gridHeight.value);
+      // 绘制完整图片
+      processCtx.drawImage(img, 0, 0, imageInfo.width, imageInfo.height);
       
-      const imageData = processCtx.getImageData(
-        0, 
-        0, 
-        gridWidth.value * dpr, 
-        gridHeight.value * dpr
+      // 获取完整图片数据（注意：getImageData 返回的是实际 canvas 尺寸的数据）
+      // 但我们需要按原始图片尺寸处理，所以先重置 scale，然后获取数据
+      processCtx.setTransform(1, 0, 0, 1, 0, 0); // 重置变换
+      const fullImageData = processCtx.getImageData(
+        0,
+        0,
+        imageInfo.width * dpr,
+        imageInfo.height * dpr
       );
+      // 恢复 scale
+      processCtx.scale(dpr, dpr);
       
-      console.log('开始像素化处理...');
-      progressText.value = '0%';
+      // 计算网格原点在原始图片中的坐标
+      // 需要根据首页的图片偏移和缩放，将显示坐标转换为原始图片坐标
+      const systemInfo = uni.getSystemInfoSync();
+      const rpxToPx = systemInfo.windowWidth / 750;
+      const editorContainerHeight = 500 * rpxToPx;
+      const editorContainerWidth = systemInfo.windowWidth - 64 * rpxToPx;
       
-      originalImageData = cloneImageData(imageData);
-      pixelateAndMatch(cloneImageData(imageData));
+      // 计算图片在编辑器首页中的实际显示尺寸（未缩放前）
+      const displayImageWidth = pixelImageWidth.value || Math.min(editorContainerWidth, imageInfo.width);
+      const displayImageHeight = (displayImageWidth / imageInfo.width) * imageInfo.height;
+      
+      // 计算图片在容器中的实际位置（考虑偏移和缩放）
+      const imageDisplayWidth = displayImageWidth * pixelScale.value;
+      const imageDisplayHeight = displayImageHeight * pixelScale.value;
+      const imageLeft = (editorContainerWidth - imageDisplayWidth) / 2 + pixelOffsetX.value;
+      const imageTop = (editorContainerHeight - imageDisplayHeight) / 2 + pixelOffsetY.value;
+      
+      // 图片中心在显示容器中的位置
+      const imageCenterXInDisplay = imageLeft + imageDisplayWidth / 2;
+      const imageCenterYInDisplay = imageTop + imageDisplayHeight / 2;
+      
+      // 计算网格原点在显示容器中的位置（图片中心对齐到网格中心）
+      // 这与首页的计算方式完全一致：gridOriginX = imageCenterX - (imageCenterX % blockSize)
+      const blockSizeInDisplay = imageDisplayWidth * pixelBlockSizeRatio.value;
+      const gridOriginXInDisplay = blockSizeInDisplay > 0 
+        ? imageCenterXInDisplay - (imageCenterXInDisplay % blockSizeInDisplay)
+        : imageCenterXInDisplay;
+      const gridOriginYInDisplay = blockSizeInDisplay > 0
+        ? imageCenterYInDisplay - (imageCenterYInDisplay % blockSizeInDisplay)
+        : imageCenterYInDisplay;
+      
+      // 将显示坐标转换为原始图片坐标
+      // 网格原点相对于图片左上角的位置
+      const gridOriginXRelativeToImage = gridOriginXInDisplay - imageLeft;
+      const gridOriginYRelativeToImage = gridOriginYInDisplay - imageTop;
+      
+      // 转换为原始图片坐标（网格原点在原始图片中的位置）
+      const gridOriginXInOriginal = (gridOriginXRelativeToImage / imageDisplayWidth) * imageInfo.width;
+      const gridOriginYInOriginal = (gridOriginYRelativeToImage / imageDisplayHeight) * imageInfo.height;
+      
+      // centerX 和 centerY 应该是网格原点，而不是图片中心
+      // 在 pixelateAndMatchPixelImage 中，会使用 centerX - (blockSize / 2) 作为 centerStartX
+      // 所以这里直接传递网格原点
+      const centerXInOriginal = gridOriginXInOriginal;
+      const centerYInOriginal = gridOriginYInOriginal;
+      
+      // 计算色块大小在原始图片中的像素数
+      // pixelBlockSizeRatio 是相对于图片宽度的比例，直接乘以原始图片宽度即可
+      const blockSizeInOriginal = imageInfo.width * pixelBlockSizeRatio.value;
+      
+      console.log('坐标转换详情:', {
+        pixelBlockSizeRatio: pixelBlockSizeRatio.value,
+        imageInfoWidth: imageInfo.width,
+        blockSizeInOriginal: blockSizeInOriginal,
+        scale: pixelScale.value,
+        offsetX: pixelOffsetX.value,
+        offsetY: pixelOffsetY.value,
+        gridOriginXInDisplay: gridOriginXInDisplay,
+        gridOriginYInDisplay: gridOriginYInDisplay,
+        gridOriginXInOriginal: gridOriginXInOriginal,
+        gridOriginYInOriginal: gridOriginYInOriginal,
+        centerXInOriginal: centerXInOriginal,
+        centerYInOriginal: centerYInOriginal
+      });
+      
+      // 验证：如果 blockSizeInOriginal 太小或太大，说明转换有问题
+      if (blockSizeInOriginal < 1 || blockSizeInOriginal > imageInfo.width) {
+        console.warn('警告：blockSizeInOriginal 值异常:', blockSizeInOriginal);
+      }
+      
+      console.log('像素图片处理参数:', {
+        centerXInOriginal,
+        centerYInOriginal,
+        blockSizeInOriginal,
+        imageWidth: imageInfo.width,
+        imageHeight: imageInfo.height,
+        expectedGridCols: Math.ceil(imageInfo.width / blockSizeInOriginal),
+        expectedGridRows: Math.ceil(imageInfo.height / blockSizeInOriginal)
+      });
+      
+      // 基于正方形网格切割（使用众数取色）
+      pixelateAndMatchPixelImage(fullImageData, {
+        centerX: centerXInOriginal,
+        centerY: centerYInOriginal,
+        blockSize: blockSizeInOriginal,
+        imageWidth: imageInfo.width,
+        imageHeight: imageInfo.height
+      });
       
       resolve();
     };
@@ -764,6 +942,234 @@ function pixelateAndMatch(sourceImage: ImageData) {
 
   console.log('处理完成！');
   console.log('网格数据:', grid.length, 'x', grid[0]?.length);
+  console.log('BOM 清单:', bomData.value.length, '种颜色');
+  console.log('总拼豆数:', totalBeads.value);
+}
+
+// 获取色块内所有像素的RGB众数
+function getModeColorFromBlock(
+  data: Uint8ClampedArray,
+  imageWidth: number,
+  imageHeight: number,
+  blockStartX: number,
+  blockStartY: number,
+  blockSize: number,
+  dpr: number = 1
+): { r: number; g: number; b: number } {
+  const colorMap = new Map<string, number>();
+  const blockEndX = blockStartX + blockSize;
+  const blockEndY = blockStartY + blockSize;
+  // 计算实际取色区域（与图片的交集）
+  // 使用精确的边界，确保与首页网格完全一致
+  // blockStartX/Y 可能是负数（网格块超出图片边界），需要正确处理
+  const actualStartX = Math.max(0, Math.floor(blockStartX));
+  const actualStartY = Math.max(0, Math.floor(blockStartY));
+  // blockEndX/Y 是开区间，使用 Math.ceil 确保包含边界像素
+  const actualEndX = Math.min(imageWidth, Math.ceil(blockEndX));
+  const actualEndY = Math.min(imageHeight, Math.ceil(blockEndY));
+  
+  // 计算实际数据宽度（考虑 DPR）
+  const dataWidth = imageWidth * dpr;
+  
+  // 遍历色块内所有像素
+  // 注意：actualStartX/Y 和 actualEndX/Y 是整数边界，但我们需要确保覆盖整个 blockStartX/Y 到 blockEndX/Y 的范围
+  // 对于部分超出边界的网格块，只取图片内的部分
+  for (let y = actualStartY; y < actualEndY; y++) {
+    for (let x = actualStartX; x < actualEndX; x++) {
+      // 确保坐标在图片范围内
+      if (x < 0 || x >= imageWidth || y < 0 || y >= imageHeight) {
+        continue;
+      }
+      
+      // 在 DPR 缩放的 canvas 中，每个原始像素对应 dpr*dpr 个数据像素
+      // 我们采样中心点或平均采样
+      const dataX = Math.floor(x * dpr + dpr / 2);
+      const dataY = Math.floor(y * dpr + dpr / 2);
+      const index = (dataY * dataWidth + dataX) * 4;
+      
+      if (index + 2 < data.length) {
+        const r = data[index];
+        const g = data[index + 1];
+        const b = data[index + 2];
+        // 将RGB量化为16级以减少颜色数量，提高众数准确性
+        const quantizedR = Math.floor(r / 16) * 16;
+        const quantizedG = Math.floor(g / 16) * 16;
+        const quantizedB = Math.floor(b / 16) * 16;
+        const colorKey = `${quantizedR},${quantizedG},${quantizedB}`;
+        colorMap.set(colorKey, (colorMap.get(colorKey) || 0) + 1);
+      }
+    }
+  }
+  
+  // 找到出现次数最多的颜色
+  let maxCount = 0;
+  let modeColor = { r: 128, g: 128, b: 128 }; // 默认灰色
+  
+  for (const [colorKey, count] of colorMap.entries()) {
+    if (count > maxCount) {
+      maxCount = count;
+      const [r, g, b] = colorKey.split(',').map(Number);
+      modeColor = { r, g, b };
+    }
+  }
+  
+  // 只在第一个网格块时输出详细日志
+  if (actualStartX === 0 && actualStartY === 0) {
+    console.log(`网格块 [${actualStartX},${actualStartY}]-[${actualEndX},${actualEndY}] 众数颜色:`, modeColor, '出现次数:', maxCount, '总像素数:', (actualEndX - actualStartX) * (actualEndY - actualStartY));
+  }
+  
+  return modeColor;
+}
+
+// 像素图片模式：基于正方形网格切割，使用众数取色
+function pixelateAndMatchPixelImage(
+  sourceImage: ImageData,
+  params: {
+    centerX: number;
+    centerY: number;
+    blockSize: number;
+    imageWidth: number;
+    imageHeight: number;
+  }
+) {
+  const { centerX, centerY, blockSize, imageWidth, imageHeight } = params;
+  const { data } = sourceImage;
+  
+  console.log('开始像素图片网格切割（众数取色）...', { 
+    centerX, 
+    centerY, 
+    blockSize,
+    imageWidth,
+    imageHeight
+  });
+  
+  // 计算中心正方形的起始位置
+  const centerStartX = centerX - (blockSize / 2);
+  const centerStartY = centerY - (blockSize / 2);
+  
+  // 计算网格范围：覆盖整个图片
+  const minGridX = Math.floor(-centerStartX / blockSize) - 1;
+  const maxGridX = Math.ceil((imageWidth - centerStartX) / blockSize) + 1;
+  const minGridY = Math.floor(-centerStartY / blockSize) - 1;
+  const maxGridY = Math.ceil((imageHeight - centerStartY) / blockSize) + 1;
+  
+  const gridCols = maxGridX - minGridX;
+  const gridRows = maxGridY - minGridY;
+  
+  console.log('网格计算:', {
+    centerStartX,
+    centerStartY,
+    minGridX,
+    maxGridX,
+    minGridY,
+    maxGridY,
+    gridCols,
+    gridRows,
+    blockSize,
+    expectedCols: Math.ceil(imageWidth / blockSize),
+    expectedRows: Math.ceil(imageHeight / blockSize)
+  });
+  
+  const grid: GridCell[][] = [];
+  const colorCountMap = new Map<string, { color: PaletteColor; count: number }>();
+  const matchFn = findClosestColor;
+  
+  for (let gridY = 0; gridY < gridRows; gridY++) {
+    const row: GridCell[] = [];
+    
+    for (let gridX = 0; gridX < gridCols; gridX++) {
+      // 计算当前网格在原始图片中的位置
+      const blockStartX = centerStartX + (gridX + minGridX) * blockSize;
+      const blockStartY = centerStartY + (gridY + minGridY) * blockSize;
+      const blockEndX = blockStartX + blockSize;
+      const blockEndY = blockStartY + blockSize;
+      
+      // 计算实际取色区域（与图片的交集）
+      // 使用 Math.floor 和 Math.ceil 确保边界精确，与首页网格完全一致
+      // blockStartX/Y 可能是负数（网格块超出图片边界），需要正确处理
+      const actualStartX = Math.max(0, Math.floor(blockStartX));
+      const actualStartY = Math.max(0, Math.floor(blockStartY));
+      // blockEndX/Y 是开区间，使用 Math.ceil 确保包含边界像素
+      const actualEndX = Math.min(imageWidth, Math.ceil(blockEndX));
+      const actualEndY = Math.min(imageHeight, Math.ceil(blockEndY));
+      
+      // 如果网格完全超出图片范围，创建空单元格
+      if (actualEndX <= actualStartX || actualEndY <= actualStartY) {
+        row.push({ x: gridX, y: gridY, color: null });
+        continue;
+      }
+      
+      // 使用众数取色（即使部分超出，也处理该网格）
+      const modeColor = getModeColorFromBlock(
+        data,
+        imageWidth,
+        imageHeight,
+        blockStartX,
+        blockStartY,
+        blockSize,
+        dpr
+      );
+      
+      // 调试日志：记录关键网格块的位置和颜色
+      if ((gridX === 0 && gridY === 0) || 
+          (gridX === Math.floor(gridCols / 2) && gridY === Math.floor(gridRows / 2)) ||
+          (gridX < 3 && gridY < 3)) {
+        console.log(`网格块 [${gridX}, ${gridY}]:`, {
+          blockStartX: blockStartX.toFixed(2),
+          blockStartY: blockStartY.toFixed(2),
+          blockEndX: blockEndX.toFixed(2),
+          blockEndY: blockEndY.toFixed(2),
+          actualStartX,
+          actualStartY,
+          actualEndX,
+          actualEndY,
+          modeColor,
+          pixelCount: (actualEndX - actualStartX) * (actualEndY - actualStartY)
+        });
+      }
+      
+      // 匹配颜色
+      const matchResult = matchFn([modeColor.r, modeColor.g, modeColor.b], brandKey.value);
+      
+      const cell: GridCell = {
+        x: gridX,
+        y: gridY,
+        color: matchResult.color
+      };
+      
+      row.push(cell);
+      
+      const colorKey = matchResult.color.name;
+      if (colorCountMap.has(colorKey)) {
+        colorCountMap.get(colorKey)!.count++;
+      } else {
+        colorCountMap.set(colorKey, {
+          color: matchResult.color,
+          count: 1
+        });
+      }
+    }
+    
+    grid.push(row);
+    
+    const progress = Math.round(((gridY + 1) / gridRows) * 100);
+    progressText.value = `${progress}%`;
+  }
+  
+  gridData.value = grid;
+  gridWidth.value = gridCols;
+  gridHeight.value = gridRows;
+  
+  bomData.value = Array.from(colorCountMap.values())
+    .sort((a, b) => {
+      if (b.count !== a.count) {
+        return b.count - a.count;
+      }
+      return a.color.name.localeCompare(b.color.name);
+    });
+  
+  console.log('像素图片处理完成！');
+  console.log('网格数据:', gridRows, 'x', gridCols);
   console.log('BOM 清单:', bomData.value.length, '种颜色');
   console.log('总拼豆数:', totalBeads.value);
 }
@@ -968,15 +1374,16 @@ function drawBeads() {
 function drawBead(x: number, y: number, color: PaletteColor, isHighlighted: boolean) {
   if (!displayCtx) return;
   
-  const centerX = x * beadSize.value + beadSize.value / 2;
-  const centerY = y * beadSize.value + beadSize.value / 2;
-  const radius = beadSize.value * 0.45;
+  // 根据密集排列状态调整绘制参数
+  const padding = denseLayout.value ? 0 : beadSize.value * 0.08; // 密集排列时无间隙
+  const size = beadSize.value - padding * 2;
+  const baseX = x * beadSize.value + padding;
+  const baseY = y * beadSize.value + padding;
+  const centerX = baseX + size / 2;
+  const centerY = baseY + size / 2;
+  const radius = size * 0.45;
   
   if (beadShape.value === 'square') {
-    const padding = beadSize.value * 0.08;
-    const size = beadSize.value - padding * 2;
-    const baseX = x * beadSize.value + padding;
-    const baseY = y * beadSize.value + padding;
 
     displayCtx.fillStyle = color.hex;
     displayCtx.fillRect(baseX, baseY, size, size);
@@ -994,7 +1401,7 @@ function drawBead(x: number, y: number, color: PaletteColor, isHighlighted: bool
     displayCtx.fill();
     
     if (showShading.value) {
-      const holeRadius = beadSize.value * 0.12;
+      const holeRadius = size * 0.12;
       displayCtx.fillStyle = 'rgba(0, 0, 0, 0.3)';
       displayCtx.beginPath();
       displayCtx.arc(centerX, centerY, holeRadius, 0, Math.PI * 2);
@@ -1005,21 +1412,21 @@ function drawBead(x: number, y: number, color: PaletteColor, isHighlighted: bool
   if (isHighlighted) {
     displayCtx.save();
     displayCtx.strokeStyle = '#FF4D4F';
-    displayCtx.lineWidth = Math.max(2, beadSize.value * 0.18);
+    displayCtx.lineWidth = Math.max(2, size * 0.18);
     displayCtx.shadowColor = 'rgba(255, 77, 79, 0.45)';
-    displayCtx.shadowBlur = beadSize.value * 0.45;
+    displayCtx.shadowBlur = size * 0.45;
     if (beadShape.value === 'square') {
-      const strokeInset = beadSize.value * 0.04;
-      const strokeSize = beadSize.value - strokeInset * 2;
+      const strokeInset = denseLayout.value ? 0 : size * 0.04;
+      const strokeSize = size - strokeInset * 2;
       displayCtx.strokeRect(
-        x * beadSize.value + strokeInset,
-        y * beadSize.value + strokeInset,
+        baseX + strokeInset,
+        baseY + strokeInset,
         strokeSize,
         strokeSize
       );
     } else {
       displayCtx.beginPath();
-      displayCtx.arc(centerX, centerY, radius + beadSize.value * 0.08, 0, Math.PI * 2);
+      displayCtx.arc(centerX, centerY, radius + size * 0.08, 0, Math.PI * 2);
       displayCtx.stroke();
     }
     displayCtx.restore();
@@ -1277,6 +1684,14 @@ function toggleStyle() {
   const next = !(showGrid.value && showShading.value);
   showGrid.value = next;
   showShading.value = next;
+  drawBeads();
+  uni.vibrateShort({
+    type: 'light'
+  });
+}
+
+function toggleDenseLayout() {
+  denseLayout.value = !denseLayout.value;
   drawBeads();
   uni.vibrateShort({
     type: 'light'

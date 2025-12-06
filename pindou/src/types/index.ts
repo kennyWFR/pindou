@@ -22,14 +22,11 @@ export interface PaletteColor {
  */
 export type BrandKey = 
   | 'mard'
+  | 'artkal'
   | 'hama'
   | 'perler'
   | 'perler-mini'
-  | 'nabbi'
-  | 'artkal-s'
-  | 'artkal-r'
-  | 'artkal-c'
-  | 'artkal-a';
+  | 'nabbi';
 
 /**
  * 品牌色卡数据结构
