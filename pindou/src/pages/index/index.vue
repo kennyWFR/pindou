@@ -348,8 +348,31 @@ const pixelGridLines = computed(() => {
 });
 
 const pixelImageStyle = computed(() => {
+  // CSS 中 top: 50%, left: 50% 将容器左上角定位到父容器中心
+  // 需要先用 translate(-50%, -50%) 将容器自身居中（相对于容器自身尺寸）
+  // 然后再叠加用户拖拽的偏移和缩放
+  // 注意：translate(-50%, -50%) 中的百分比是相对于元素自身的宽高
+  // 由于容器内只有图片，容器大小就是图片的原始显示大小（未缩放前）
+  
+  // 计算图片的原始显示尺寸（未缩放）
+  const originalImageWidth = pixelImageWidth.value;
+  const originalImageHeight = pixelImageInfo.value 
+    ? (originalImageWidth / pixelImageInfo.value.width) * pixelImageInfo.value.height
+    : 0;
+  
+  // 计算居中偏移（负的原始图片尺寸的一半）
+  // 这是 translate(-50%, -50%) 的等效像素值
+  const centerOffsetX = -originalImageWidth / 2;
+  const centerOffsetY = -originalImageHeight / 2;
+  
+  // 组合 transform：先居中（相对于原始尺寸），再叠加用户拖拽偏移，最后缩放
+  // 缩放会以 transformOrigin (center center) 为中心进行
+  const translateX = centerOffsetX + pixelImageOffsetX.value;
+  const translateY = centerOffsetY + pixelImageOffsetY.value;
+  const scale = pixelImageScale.value;
+  
   return {
-    transform: `translate(${pixelImageOffsetX.value}px, ${pixelImageOffsetY.value}px) scale(${pixelImageScale.value})`,
+    transform: `translate(${translateX}px, ${translateY}px) scale(${scale})`,
     transformOrigin: 'center center'
   };
 });

@@ -13,7 +13,7 @@
     <view class="main-content" :class="{ 'main-content-disabled': isProcessing }">
       <!-- 顶部导航栏 -->
       <view class="nav-bar">
-        <view class="nav-left" @tap="handleBack">
+        <view class="nav-left nav-action" @tap="handleBack">
           <text class="nav-text">返回</text>
         </view>
         <view class="nav-center"></view>
@@ -60,6 +60,11 @@
         type="2d"
         class="hidden-canvas"
       ></canvas>
+
+      <!-- 图纸说明 -->
+      <view class="canvas-tip">
+        <text class="canvas-tip-text">💡 点击图纸，可改色号和一键高亮</text>
+      </view>
 
       <!-- 画布容器 -->
       <view
@@ -140,6 +145,10 @@
             <text class="tool-icon">{{ showCodes ? '🚫' : '🔠' }}</text>
             <text class="tool-label">{{ showCodes ? '隐藏色号' : '显示色号' }}</text>
           </view>
+          <view class="tool-btn" @tap="toggleColorMerge">
+            <text class="tool-icon">{{ colorMerged ? '🔓' : '🔗' }}</text>
+            <text class="tool-label">{{ colorMerged ? '解除合并' : '颜色合并' }}</text>
+          </view>
           <view class="tool-btn" @tap="toggleDenseLayout">
             <text class="tool-icon">{{ denseLayoutIcon }}</text>
             <text class="tool-label">{{ denseLayoutLabel }}</text>
@@ -148,13 +157,72 @@
             <text class="tool-icon">{{ colorAlgorithm === 'enhanced' ? '✨' : '🧠' }}</text>
             <text class="tool-label">{{ algorithmLabel }}</text>
           </view>
-          <view class="tool-btn" @tap="toggleBeadShape">
+          <view v-if="imageType === 'pixel'" class="tool-btn" @tap="toggleBeadShape">
             <text class="tool-icon">{{ beadShapeIcon }}</text>
             <text class="tool-label">{{ beadShapeLabel }}</text>
           </view>
-          <view v-if="imageType === 'pixel'" class="tool-btn" @tap="toggleStyle">
-            <text class="tool-icon">{{ styleIcon }}</text>
-            <text class="tool-label">{{ styleLabel }}</text>
+        </view>
+      </view>
+
+      <!-- 高级设置板块 -->
+      <view class="advanced-settings-section">
+        <view class="section-title">
+          <text class="section-label">高级设置</text>
+        </view>
+        <view class="settings-content">
+          <view class="setting-item">
+            <view class="setting-row">
+              <text class="setting-label">颜色合并阈值</text>
+              <view class="setting-input-wrapper">
+                <input
+                  v-model.number="colorMergeThreshold"
+                  type="number"
+                  class="setting-input"
+                  placeholder="5"
+                  min="1"
+                  max="20"
+                />
+                <text class="setting-unit">颗</text>
+              </view>
+            </view>
+            <text class="setting-hint">用量小于等于此值的色号将被合并</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 作品信息 -->
+      <view class="work-info-section">
+        <view class="work-info-header">
+          <text class="work-info-title">作品信息</text>
+          <text class="work-info-tip">导出长图时添加署名标记</text>
+        </view>
+        <view class="work-info-inputs">
+          <view class="work-info-item">
+            <text class="work-info-label">作品名称</text>
+            <input
+              v-model="workName"
+              class="work-info-input"
+              placeholder="请输入作品名称（可选）"
+              maxlength="20"
+            />
+          </view>
+          <view class="work-info-item">
+            <text class="work-info-label">作者名称</text>
+            <input
+              v-model="authorName"
+              class="work-info-input"
+              placeholder="请输入作者名称（可选）"
+              maxlength="20"
+            />
+          </view>
+          <view class="work-info-item">
+            <text class="work-info-label">水印内容</text>
+            <input
+              v-model="watermarkText"
+              class="work-info-input"
+              placeholder="请输入水印内容（可选）"
+              maxlength="30"
+            />
           </view>
         </view>
       </view>
@@ -238,7 +306,7 @@
           <view class="cell-info-details">
             <view class="cell-position">
               <text class="position-label">位置:</text>
-              <text class="position-value">({{ selectedCell.x }}, {{ selectedCell.y }})</text>
+              <text class="position-value">({{ selectedCell.x }}, {{ gridHeight - 1 - selectedCell.y }})</text>
             </view>
             <view class="cell-current-color">
               <text class="color-label">当前:</text>
@@ -268,34 +336,51 @@
 
         <!-- 颜色列表 -->
         <scroll-view class="color-list" scroll-y>
-          <!-- 橡皮擦选项 -->
-          <view class="color-item eraser" @tap="selectColor(null)">
-            <view class="color-preview eraser-preview">
-              <text class="eraser-icon">🧹</text>
+          <!-- 橡皮擦和上次选择 -->
+          <view class="eraser-last-row">
+            <view class="color-item eraser-compact" @tap="selectColor(null)">
+              <view class="color-preview eraser-preview-compact">
+                <text class="eraser-icon">🧹</text>
+              </view>
+              <view class="color-info-compact">
+                <text class="color-item-name-compact">橡皮擦</text>
+              </view>
+              <text v-if="!selectedCell?.color" class="check-icon-compact">✓</text>
             </view>
-            <view class="color-info">
-              <text class="color-item-name">橡皮擦</text>
-              <text class="color-item-hex">清除颜色</text>
+            <view 
+              v-if="lastSelectedColor" 
+              class="color-item last-select-compact" 
+              @tap="selectLastUsedColor"
+            >
+              <view class="color-preview last-select-preview-compact" :style="{ backgroundColor: lastSelectedColor.hex }">
+                <text v-if="selectedCell?.color?.name === lastSelectedColor.name" class="check-icon-compact">✓</text>
+              </view>
+              <view class="color-info-compact">
+                <text class="last-select-label">上次选择</text>
+                <text class="color-item-name-compact">{{ lastSelectedColor.name }}</text>
+              </view>
             </view>
           </view>
 
           <!-- 品牌颜色列表 -->
-          <view 
-            v-for="color in brandColors" 
-            :key="color.name"
-            class="color-item"
-            :class="{ 'color-item-selected': selectedCell?.color?.name === color.name }"
-            @tap="selectColor(color)"
-          >
+          <view class="color-grid">
             <view 
-              class="color-preview" 
-              :style="{ backgroundColor: color.hex }"
-            ></view>
-            <view class="color-info">
-              <text class="color-item-name">{{ color.name }}</text>
-              <text class="color-item-code">{{ color.code }}</text>
+              v-for="color in brandColors" 
+              :key="color.name"
+              class="color-item-grid"
+              :class="{ 'color-item-selected': selectedCell?.color?.name === color.name }"
+              @tap="selectColor(color)"
+            >
+              <view 
+                class="color-preview-grid" 
+                :style="{ backgroundColor: color.hex }"
+              >
+                <text v-if="selectedCell?.color?.name === color.name" class="check-icon-grid">✓</text>
+              </view>
+              <view class="color-info-grid">
+                <text class="color-item-name-grid">{{ color.name }}</text>
+              </view>
             </view>
-            <text v-if="selectedCell?.color?.name === color.name" class="check-icon">✓</text>
           </view>
         </scroll-view>
       </view>
@@ -331,6 +416,7 @@ interface PosterLayout {
   padding: number;
   titleY: number;
   metaStartY: number;
+  workInfoY: number;
   image: {
     x: number;
     y: number;
@@ -339,6 +425,8 @@ interface PosterLayout {
   };
   bomStartY: number;
   bomRowHeight: number;
+  qrCodeY: number;
+  qrCodeSize: number;
 }
 
 // ============================================
@@ -402,7 +490,7 @@ const showCodes = ref<boolean>(true);
 const showShading = ref<boolean>(false);
 const highlightColor = ref<string | null>(null);
 const toolsOffsetTop = ref<number>(0);
-const colorPickerHeight = ref<number>(480);
+const colorPickerHeight = ref<number>(1200);
 const movableKey = ref<number>(0);
 const showColorPicker = ref<boolean>(false);
 const selectedCell = ref<GridCell | null>(null);
@@ -412,6 +500,23 @@ let zoomCooldownUntil = 0;
 const colorAlgorithm = ref<ColorAlgorithm>('standard');
 const beadShape = ref<'circle' | 'square'>('square');
 const denseLayout = ref<boolean>(true); // true = 无间隙（密集排列，默认），false = 有间隙
+const colorMerged = ref<boolean>(false); // 颜色合并状态
+
+// 保存原始数据，用于解除合并
+const originalGridData = ref<GridCell[][]>([]);
+const originalBomData = ref<BOMItem[]>([]);
+
+
+// 上次选择的颜色
+const lastSelectedColor = ref<PaletteColor | null>(null);
+
+// 作品信息
+const workName = ref<string>('');
+const authorName = ref<string>('');
+const watermarkText = ref<string>(''); // 水印内容
+
+// 颜色合并阈值
+const colorMergeThreshold = ref<number>(5); // 默认值为5
 
 // ============================================
 // 计算属性
@@ -436,7 +541,7 @@ const topBomItem = computed(() => bomData.value[0] || null);
 const restBomItems = computed(() => bomData.value.slice(1));
 
 const algorithmLabel = computed(() =>
-  colorAlgorithm.value === 'enhanced' ? '标准图像' : '图像增强'
+  colorAlgorithm.value === 'enhanced' ? '标准图像' : '图像锐化'
 );
 const beadShapeLabel = computed(() =>
   beadShape.value === 'circle' ? '方形拼豆' : '圆形色块'
@@ -456,6 +561,7 @@ const colorPickerStyle = computed(() => {
     maxHeight: `${colorPickerHeight.value}px`
   };
 });
+
 
 // ============================================
 // 生命周期
@@ -519,6 +625,12 @@ async function initializeEditor() {
     
     loadingText.value = '加载图片...';
     await loadAndProcessImage();
+    
+    // 图片处理完成后，重置合并状态和原始数据
+    colorMerged.value = false;
+    originalGridData.value = [];
+    originalBomData.value = [];
+    
     updateCanvasLayout();
     
     loadingText.value = '绘制拼豆...';
@@ -991,11 +1103,8 @@ function getModeColorFromBlock(
         const r = data[index];
         const g = data[index + 1];
         const b = data[index + 2];
-        // 将RGB量化为16级以减少颜色数量，提高众数准确性
-        const quantizedR = Math.floor(r / 16) * 16;
-        const quantizedG = Math.floor(g / 16) * 16;
-        const quantizedB = Math.floor(b / 16) * 16;
-        const colorKey = `${quantizedR},${quantizedG},${quantizedB}`;
+        // 使用原始RGB值进行精准的众数计算
+        const colorKey = `${r},${g},${b}`;
         colorMap.set(colorKey, (colorMap.get(colorKey) || 0) + 1);
       }
     }
@@ -1231,9 +1340,10 @@ function measureToolsOffset() {
         .boundingClientRect((rect: any) => {
           if (rect && rect.top !== undefined) {
             toolsOffsetTop.value = rect.top;
-            const systemInfo = uni.getSystemInfoSync();
-            const available = Math.max(320, systemInfo.windowHeight - rect.top - 24);
-            colorPickerHeight.value = available;
+            // 不再自动计算高度，使用固定的1200px
+            // const systemInfo = uni.getSystemInfoSync();
+            // const available = Math.max(320, systemInfo.windowHeight - rect.top - 24);
+            // colorPickerHeight.value = available;
           }
         })
         .exec();
@@ -1357,7 +1467,8 @@ function drawBeads() {
         if (cell && cell.color) {
           const isHighlighted =
             highlightColor.value !== null && cell.color.name === highlightColor.value;
-          drawBead(x, y, cell.color, isHighlighted);
+          const isDimmed = highlightColor.value !== null && !isHighlighted;
+          drawBead(x, y, cell.color, isHighlighted, isDimmed);
         }
     }
   }
@@ -1371,7 +1482,7 @@ function drawBeads() {
   }
 }
 
-function drawBead(x: number, y: number, color: PaletteColor, isHighlighted: boolean) {
+function drawBead(x: number, y: number, color: PaletteColor, isHighlighted: boolean, isDimmed: boolean = false) {
   if (!displayCtx) return;
   
   // 根据密集排列状态调整绘制参数
@@ -1405,6 +1516,18 @@ function drawBead(x: number, y: number, color: PaletteColor, isHighlighted: bool
       displayCtx.fillStyle = 'rgba(0, 0, 0, 0.3)';
       displayCtx.beginPath();
       displayCtx.arc(centerX, centerY, holeRadius, 0, Math.PI * 2);
+      displayCtx.fill();
+    }
+  }
+  
+  // 非高亮色块变暗（添加透明层）
+  if (isDimmed) {
+    displayCtx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    if (beadShape.value === 'square') {
+      displayCtx.fillRect(baseX, baseY, size, size);
+    } else {
+      displayCtx.beginPath();
+      displayCtx.arc(centerX, centerY, radius, 0, Math.PI * 2);
       displayCtx.fill();
     }
   }
@@ -1489,6 +1612,7 @@ function drawGridLines() {
   }
 }
 
+
 function drawSelectionBox(x: number, y: number) {
   if (!displayCtx) return;
   
@@ -1559,6 +1683,11 @@ function selectColor(color: PaletteColor | null) {
   
   gridData.value[y][x].color = color;
   
+  // 保存上次选择的颜色（如果不是橡皮擦）
+  if (color) {
+    lastSelectedColor.value = color;
+  }
+  
   updateBOMData(oldColor, color);
   
   drawBeads();
@@ -1570,6 +1699,17 @@ function selectColor(color: PaletteColor | null) {
   });
   
   console.log('颜色已更改:', oldColor?.name, '→', color?.name || '空');
+}
+
+function selectLastUsedColor() {
+  if (lastSelectedColor.value) {
+    selectColor(lastSelectedColor.value);
+  } else {
+    uni.showToast({
+      title: '暂无上次选择的颜色',
+      icon: 'none'
+    });
+  }
 }
 
 function updateBOMData(oldColor: PaletteColor | null, newColor: PaletteColor | null) {
@@ -1665,7 +1805,7 @@ function toggleColorCodes() {
 async function toggleAlgorithm() {
   colorAlgorithm.value = colorAlgorithm.value === 'enhanced' ? 'standard' : 'enhanced';
   uni.showToast({
-    title: colorAlgorithm.value === 'enhanced' ? '已启用图像增强' : '切换到标准图像',
+    title: colorAlgorithm.value === 'enhanced' ? '已启用图像锐化' : '切换到标准图像',
     icon: 'none',
     duration: 1200
   });
@@ -1697,6 +1837,226 @@ function toggleDenseLayout() {
     type: 'light'
   });
 }
+
+// 计算两个RGB颜色之间的欧几里得距离
+function calculateColorDistance(
+  rgb1: [number, number, number],
+  rgb2: [number, number, number]
+): number {
+  const [r1, g1, b1] = rgb1;
+  const [r2, g2, b2] = rgb2;
+  return Math.sqrt(
+    Math.pow(r2 - r1, 2) +
+    Math.pow(g2 - g1, 2) +
+    Math.pow(b2 - b1, 2)
+  );
+}
+
+// 从hex颜色转换为RGB
+function hexToRgb(hex: string): [number, number, number] | null {
+  const rgb = parseHexColor(hex);
+  if (!rgb) return null;
+  return [rgb.r, rgb.g, rgb.b];
+}
+
+// 颜色合并功能
+function mergeColors() {
+  // 保存原始数据（只在第一次合并时保存）
+  if (originalGridData.value.length === 0) {
+    originalGridData.value = JSON.parse(JSON.stringify(gridData.value));
+    originalBomData.value = JSON.parse(JSON.stringify(bomData.value));
+  }
+  
+  let totalMerged = 0;
+  let iteration = 0;
+  const maxIterations = 10; // 防止无限循环
+  
+  // 迭代合并，直到所有颜色用量都大于阈值
+  while (iteration < maxIterations) {
+    // 重新计算当前bomData
+    const currentColorCountMap = new Map<string, { color: PaletteColor; count: number }>();
+    
+    for (let y = 0; y < gridData.value.length; y++) {
+      for (let x = 0; x < gridData.value[y].length; x++) {
+        const cell = gridData.value[y][x];
+        if (cell && cell.color) {
+          const colorName = cell.color.name;
+          if (currentColorCountMap.has(colorName)) {
+            currentColorCountMap.get(colorName)!.count++;
+          } else {
+            currentColorCountMap.set(colorName, {
+              color: cell.color,
+              count: 1
+            });
+          }
+        }
+      }
+    }
+    
+    const currentBomData = Array.from(currentColorCountMap.values());
+    
+    // 找出所有用量 > 阈值 的颜色（候选颜色，用于匹配）
+    const candidateColors: PaletteColor[] = [];
+    currentBomData.forEach(item => {
+      if (item.count > colorMergeThreshold.value && item.color) {
+        candidateColors.push(item.color);
+      }
+    });
+    
+    // 找出所有用量 <= 阈值 的颜色
+    const smallCountColors: Array<{ color: PaletteColor; count: number }> = [];
+    currentBomData.forEach(item => {
+      if (item.count <= colorMergeThreshold.value && item.color) {
+        smallCountColors.push({ color: item.color, count: item.count });
+      }
+    });
+    
+    // 如果没有需要合并的颜色，退出循环
+    if (smallCountColors.length === 0) {
+      break;
+    }
+    
+    // 如果没有候选颜色，无法继续合并
+    if (candidateColors.length === 0) {
+      uni.showToast({
+        title: `无法继续合并：所有颜色用量都 <= ${colorMergeThreshold.value}`,
+        icon: 'none'
+      });
+      return;
+    }
+    
+    // 创建颜色映射表：用量 <= 3 的颜色 -> 最相近的用量 > 3 的颜色
+    const colorMap = new Map<string, PaletteColor>();
+    
+    // 为每个用量 <= 3 的颜色找到最相近的候选颜色
+    smallCountColors.forEach(({ color: smallColor }) => {
+      const smallRgb = hexToRgb(smallColor.hex);
+      if (!smallRgb) return;
+      
+      let closestColor: PaletteColor | null = null;
+      let minDistance = Infinity;
+      
+      candidateColors.forEach(candidateColor => {
+        // 跳过自己
+        if (candidateColor.name === smallColor.name) return;
+        
+        const candidateRgb = hexToRgb(candidateColor.hex);
+        if (!candidateRgb) return;
+        
+        const distance = calculateColorDistance(smallRgb, candidateRgb);
+        if (distance < minDistance) {
+          minDistance = distance;
+          closestColor = candidateColor;
+        }
+      });
+      
+      if (closestColor) {
+        colorMap.set(smallColor.name, closestColor);
+      }
+    });
+    
+    if (colorMap.size === 0) {
+      break;
+    }
+    
+    totalMerged += colorMap.size;
+    
+    // 应用颜色映射到gridData
+    for (let y = 0; y < gridData.value.length; y++) {
+      for (let x = 0; x < gridData.value[y].length; x++) {
+        const cell = gridData.value[y][x];
+        if (cell && cell.color && colorMap.has(cell.color.name)) {
+          cell.color = colorMap.get(cell.color.name)!;
+        }
+      }
+    }
+    
+    iteration++;
+  }
+  
+  // 重新计算最终的bomData
+  const finalColorCountMap = new Map<string, { color: PaletteColor; count: number }>();
+  
+  for (let y = 0; y < gridData.value.length; y++) {
+    for (let x = 0; x < gridData.value[y].length; x++) {
+      const cell = gridData.value[y][x];
+      if (cell && cell.color) {
+        const colorName = cell.color.name;
+        if (finalColorCountMap.has(colorName)) {
+          finalColorCountMap.get(colorName)!.count++;
+        } else {
+          finalColorCountMap.set(colorName, {
+            color: cell.color,
+            count: 1
+          });
+        }
+      }
+    }
+  }
+  
+  bomData.value = Array.from(finalColorCountMap.values())
+    .sort((a, b) => b.count - a.count);
+  
+  drawBeads();
+  
+  if (totalMerged > 0) {
+    uni.showToast({
+      title: `已合并 ${totalMerged} 种颜色`,
+      icon: 'success',
+      duration: 1500
+    });
+  } else {
+    uni.showToast({
+      title: '没有需要合并的颜色',
+      icon: 'none'
+    });
+  }
+}
+
+// 解除颜色合并
+function unmergeColors() {
+  if (originalGridData.value.length === 0 || originalBomData.value.length === 0) {
+    uni.showToast({
+      title: '没有可恢复的数据',
+      icon: 'none'
+    });
+    return;
+  }
+  
+  // 恢复原始数据
+  gridData.value = JSON.parse(JSON.stringify(originalGridData.value));
+  bomData.value = JSON.parse(JSON.stringify(originalBomData.value));
+  
+  // 注意：不清空originalGridData和originalBomData，以便用户再次合并时可以使用
+  // 但如果用户重新处理图片，这些数据会被新的数据覆盖
+  
+  drawBeads();
+  
+  uni.showToast({
+    title: '已解除合并',
+    icon: 'success',
+    duration: 1500
+  });
+}
+
+// 切换颜色合并状态
+function toggleColorMerge() {
+  if (colorMerged.value) {
+    // 当前是合并状态，解除合并
+    unmergeColors();
+    colorMerged.value = false;
+  } else {
+    // 当前是未合并状态，执行合并
+    // 注意：合并操作不会影响图像增强状态
+    mergeColors();
+    colorMerged.value = true;
+  }
+  
+  uni.vibrateShort({
+    type: 'light'
+  });
+}
+
 
 function resetView() {
   if (isH5.value) {
@@ -1771,8 +2131,8 @@ async function handleSaveImage() {
   });
   
   try {
-    // 导出高清图片
-    const tempFilePath = await canvasToTempFilePath();
+    // 导出高清图片（带水印）
+    const tempFilePath = await canvasToTempFilePathWithWatermark();
     
     // 保存到相册
     await saveImageToPhotosAlbum(tempFilePath);
@@ -1821,8 +2181,8 @@ async function handleExportPoster() {
 
   try {
     const snapshotPath = await canvasToTempFilePath();
-    const bomItems = bomData.value.slice(0, 30);
-    const layout = computePosterLayout(bomItems);
+    const bomItems = bomData.value; // 展示所有颜色
+    const layout = await computePosterLayout(bomItems);
     await ensurePosterCanvas(layout.height);
     await drawPoster(snapshotPath, layout, bomItems);
     const posterPath = await posterCanvasToTempFile(layout.height);
@@ -1886,6 +2246,104 @@ function canvasToTempFilePath(): Promise<string> {
   });
 }
 
+/**
+ * Canvas 转临时文件（带水印）
+ * 注意：使用processCanvas添加水印，不影响displayCanvas
+ */
+async function canvasToTempFilePathWithWatermark(): Promise<string> {
+  if (!watermarkText.value) {
+    // 如果没有水印，直接导出
+    return await canvasToTempFilePath();
+  }
+  
+  // 使用processCanvas添加水印，不影响displayCanvas
+  return new Promise((resolve, reject) => {
+    const query = uni.createSelectorQuery();
+    
+    query
+      .select('#displayCanvas')
+      .fields({ node: true, size: true })
+      .exec(async (res) => {
+        if (!res || !res[0] || !res[0].node) {
+          resolve(await canvasToTempFilePath());
+          return;
+        }
+        
+        const sourceCanvas = res[0].node;
+        const width = canvasViewWidth.value * dpr * 2;
+        const height = canvasViewHeight.value * dpr * 2;
+        
+        // 使用processCanvas作为临时canvas
+        if (!processCanvas || !processCtx) {
+          resolve(await canvasToTempFilePath());
+          return;
+        }
+        
+        // 设置processCanvas尺寸
+        processCanvas.width = width;
+        processCanvas.height = height;
+        
+        // 将原图绘制到processCanvas
+        processCtx.drawImage(sourceCanvas, 0, 0, width, height);
+        
+        // 添加稀疏水印
+        processCtx.save();
+        processCtx.globalAlpha = 0.15; // 更透明
+        processCtx.fillStyle = '#000000';
+        const fontSize = Math.floor(width / 40); // 更小的字体
+        processCtx.font = `${fontSize}px Arial`;
+        processCtx.textAlign = 'left';
+        processCtx.textBaseline = 'middle';
+        
+        // 计算倾斜角度和间距（更大的间距，稀疏分布）
+        const angle = -30 * Math.PI / 180; // -30度倾斜
+        const textSpacing = fontSize * 8; // 更大的文字间距（稀疏）
+        const rowSpacing = fontSize * 6; // 更大的行间距（稀疏）
+        
+        // 计算需要绘制的行数和列数
+        const diagonal = Math.sqrt(width * width + height * height);
+        const rows = Math.ceil(diagonal / rowSpacing) + 2;
+        const cols = Math.ceil(diagonal / textSpacing) + 2;
+        
+        // 绘制重复水印（稀疏分布）
+        for (let row = -1; row < rows; row++) {
+          for (let col = -1; col < cols; col++) {
+            const x = col * textSpacing;
+            const y = row * rowSpacing;
+            
+            processCtx.save();
+            processCtx.translate(x, y);
+            processCtx.rotate(angle);
+            processCtx.fillText(watermarkText.value, 0, 0);
+            processCtx.restore();
+          }
+        }
+        
+        processCtx.restore();
+        
+        // 从processCanvas导出带水印的图片
+        uni.canvasToTempFilePath({
+          canvas: processCanvas,
+          x: 0,
+          y: 0,
+          width: width,
+          height: height,
+          destWidth: width,
+          destHeight: height,
+          fileType: 'png',
+          quality: 1,
+          success: (res) => {
+            resolve(res.tempFilePath);
+          },
+          fail: async (err) => {
+            console.error('带水印导出失败，使用原图:', err);
+            resolve(await canvasToTempFilePath());
+          }
+        });
+      });
+  });
+}
+
 function ensurePosterCanvas(targetHeight: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const setup = () => {
@@ -1926,33 +2384,92 @@ function resizePosterCanvas(targetHeight: number) {
   posterCtx.scale(posterScale, posterScale);
 }
 
-function computePosterLayout(items: BOMItem[]): PosterLayout {
-  const padding = 72;
+async function computePosterLayout(items: BOMItem[]): Promise<PosterLayout> {
+  const padding = 60; // 整体内边距
   const width = POSTER_WIDTH;
-  const titleHeight = 120;
-  const metaHeight = 120;
-  const gap = 48;
+  const titleHeight = 80; // 标题区域高度
+  const titleTopMargin = 50; // 标题距离顶部的距离
+  const titleToWorkInfoGap = 80; // 标题和作品信息（品牌、尺寸）之间的间距（提高一倍）
+  
+  // 计算作品信息区域实际高度（根据实际卡片数量）
+  const infoItemsCount = (workName.value.trim() ? 1 : 0) + (authorName.value.trim() ? 1 : 0) + 2; // 作品、作者（可选）+ 品牌、尺寸
+  const cardHeight = 56; // 卡片高度
+  const cardRowGap = 16; // 卡片行间距
+  const workInfoRows = Math.ceil(infoItemsCount / 2); // 每行2个卡片
+  const workInfoHeight = workInfoRows * cardHeight + (workInfoRows - 1) * cardRowGap + 30; // 实际高度 + 上下边距
+  
+  const gap = 45; // 作品信息和图片之间的间距（增加间距防止重叠）
+  const imageGap = 80; // 图片和拼豆清单之间的留白（进一步增大，提升视觉层次）
   const imageWidth = width - padding * 2;
   const aspectRatio = canvasViewHeight.value > 0 ? (canvasViewHeight.value / canvasViewWidth.value) : 1;
   const imageHeight = Math.round(imageWidth * aspectRatio);
-  const rowHeight = 70;
-  const bomHeight = items.length * rowHeight + 140;
-  const height = padding + titleHeight + metaHeight + gap + imageHeight + gap + bomHeight + padding;
+  
+  // 计算材料清单高度：多色一行显示，每行5个颜色
+  const colorsPerRow = 5;
+  const bomRowHeight = 80; // 每行高度
+  const bomRows = Math.ceil(items.length / colorsPerRow);
+  const bomHeight = bomRows * bomRowHeight + 100; // 标题+内容+底部间距
+  
+  // 底部图片区域（进一步扩大，从360px增加到480px）
+  // 先尝试获取图片信息，根据实际尺寸计算高度，避免预留过多空白
+  const bottomImageMaxSize = 480;
+  const bottomImagePadding = 20; // 减少底部间距，只保留少量留白
+  
+  // 尝试获取底部图片信息来计算实际高度
+  // 如果获取失败，使用估算值（假设图片是横向的，宽高比约1.2:1）
+  let bottomImageHeight = bottomImageMaxSize;
+  try {
+    // 尝试获取图片信息
+    const imageInfo = await new Promise<UniApp.GetImageInfoSuccessData>((resolve, reject) => {
+      const paths = ['/static/qrcode.png', '/static/qrcode.jpg', 'static/qrcode.png', 'static/qrcode.jpg'];
+      let currentIndex = 0;
+      const tryNextPath = () => {
+        if (currentIndex >= paths.length) {
+          reject(new Error('无法获取图片信息'));
+          return;
+        }
+        uni.getImageInfo({
+          src: paths[currentIndex],
+          success: resolve,
+          fail: () => {
+            currentIndex++;
+            tryNextPath();
+          }
+        });
+      };
+      tryNextPath();
+    });
+    
+    // 根据图片实际尺寸计算显示高度
+    const maxWidth = 480;
+    const imageAspectRatio = imageInfo.width / imageInfo.height;
+    bottomImageHeight = imageAspectRatio > 1 
+      ? maxWidth / imageAspectRatio  // 横向图片，高度更小
+      : Math.min(maxWidth, maxWidth * imageAspectRatio); // 纵向图片
+  } catch (error) {
+    // 如果获取失败，使用估算值（假设是横向图片，高度约为宽度的0.8倍）
+    bottomImageHeight = bottomImageMaxSize * 0.8;
+  }
+  
+  const height = padding + titleTopMargin + titleHeight + titleToWorkInfoGap + workInfoHeight + gap + imageHeight + imageGap + bomHeight + gap + bottomImageHeight + bottomImagePadding + padding;
 
   return {
     width,
     height,
     padding,
-    titleY: padding + 40,
-    metaStartY: padding + titleHeight,
+    titleY: padding + titleTopMargin,
+    metaStartY: padding + titleTopMargin + titleHeight + titleToWorkInfoGap,
+    workInfoY: padding + titleTopMargin + titleHeight + titleToWorkInfoGap, // 标题和作品信息之间的间距提高一倍
     image: {
       x: padding,
-      y: padding + titleHeight + metaHeight,
+      y: padding + titleTopMargin + titleHeight + titleToWorkInfoGap + workInfoHeight + gap, // 确保在作品信息下方
       width: imageWidth,
       height: imageHeight
     },
-    bomStartY: padding + titleHeight + metaHeight + gap + imageHeight + gap,
-    bomRowHeight: rowHeight
+    bomStartY: padding + titleTopMargin + titleHeight + titleToWorkInfoGap + workInfoHeight + gap + imageHeight + imageGap,
+    bomRowHeight: bomRowHeight,
+    qrCodeY: padding + titleTopMargin + titleHeight + titleToWorkInfoGap + workInfoHeight + gap + imageHeight + imageGap + bomHeight + gap,
+    qrCodeSize: bottomImageMaxSize // 保持接口兼容性，但实际使用时会根据图片宽高比计算
   };
 }
 
@@ -1963,31 +2480,147 @@ async function drawPoster(snapshotPath: string, layout: PosterLayout, items: BOM
 
   posterCtx.clearRect(0, 0, layout.width, layout.height);
 
-  const gradient = posterCtx.createLinearGradient(0, 0, 0, layout.height);
-  gradient.addColorStop(0, '#0a1f1a');
-  gradient.addColorStop(1, '#0d2820');
-  posterCtx.fillStyle = gradient;
+  // 直接使用白色背景，简洁美观
+  posterCtx.fillStyle = '#FFFFFF';
   posterCtx.fillRect(0, 0, layout.width, layout.height);
 
-  drawRoundedRect(posterCtx, 36, 40, layout.width - 72, layout.height - 80, 32, 'rgba(255,255,255,0.95)');
-
   drawPosterHeader(layout);
-  drawPosterMeta(layout);
+  drawPosterWorkInfo(layout);
   await drawPosterImage(snapshotPath, layout);
   drawPosterBOM(layout, items);
+  await drawPosterQRCode(layout);
+  
+  // 添加稀疏倾斜重复水印（如果有）
+  if (watermarkText.value && posterCtx) {
+    posterCtx.save();
+    posterCtx.globalAlpha = 0.15; // 更透明
+    posterCtx.fillStyle = '#000000';
+    const fontSize = 18; // 更小的字体
+    posterCtx.font = `${fontSize}px Arial`;
+    posterCtx.textAlign = 'left';
+    posterCtx.textBaseline = 'middle';
+    
+    // 计算倾斜角度和间距（更大的间距，稀疏分布）
+    const angle = -30 * Math.PI / 180; // -30度倾斜
+    const textSpacing = fontSize * 8; // 更大的文字间距（稀疏）
+    const rowSpacing = fontSize * 6; // 更大的行间距（稀疏）
+    
+    // 计算需要绘制的行数和列数
+    const diagonal = Math.sqrt(layout.width * layout.width + layout.height * layout.height);
+    const rows = Math.ceil(diagonal / rowSpacing) + 2;
+    const cols = Math.ceil(diagonal / textSpacing) + 2;
+    
+    // 绘制重复水印（稀疏分布）
+    for (let row = -1; row < rows; row++) {
+      for (let col = -1; col < cols; col++) {
+        const x = col * textSpacing;
+        const y = row * rowSpacing;
+        
+        posterCtx.save();
+        posterCtx.translate(x, y);
+        posterCtx.rotate(angle);
+        posterCtx.fillText(watermarkText.value, 0, 0);
+        posterCtx.restore();
+      }
+    }
+    
+    posterCtx.restore();
+  }
 }
 
 function drawPosterHeader(layout: PosterLayout) {
   if (!posterCtx) return;
   posterCtx.save();
-  posterCtx.fillStyle = '#0a1f1a';
-  posterCtx.font = '700 60px "PingFang SC","Helvetica Neue",sans-serif';
+  posterCtx.fillStyle = '#6C5CE7'; // 淡紫色，和"共**颗/**色"保持一致
+  posterCtx.font = '700 56px "PingFang SC","Helvetica Neue",sans-serif';
   posterCtx.textAlign = 'center';
   posterCtx.textBaseline = 'top';
-  posterCtx.fillText('拼豆魔法工坊', layout.width / 2, layout.padding + 20);
-  posterCtx.font = '400 30px "PingFang SC","Helvetica Neue",sans-serif';
-  posterCtx.fillStyle = '#5f7a76';
-  posterCtx.fillText('Pixel Bead Poster', layout.width / 2, layout.padding + 90);
+  posterCtx.fillText('拼豆魔法工坊', layout.width / 2, layout.titleY);
+  posterCtx.restore();
+}
+
+function drawPosterWorkInfo(layout: PosterLayout) {
+  if (!posterCtx) return;
+  posterCtx.save();
+  
+  const infoItems: Array<{ label: string; value: string }> = [];
+  
+  if (workName.value.trim()) {
+    infoItems.push({ label: '作品', value: workName.value.trim() });
+  }
+  if (authorName.value.trim()) {
+    infoItems.push({ label: '作者', value: authorName.value.trim() });
+  }
+  infoItems.push({ label: '品牌', value: brandInfo.value?.displayName || '--' });
+  infoItems.push({ label: '尺寸', value: `${gridWidth.value}×${gridHeight.value}` });
+  
+  // 卡片式布局：每行2个，使用圆角卡片背景
+  const cardWidth = (layout.width - layout.padding * 2 - 24) / 2; // 每张卡片宽度，减去间距
+  const cardHeight = 56; // 增加卡片高度
+  const cardGap = 24; // 卡片之间的间距（增加间距）
+  const cardRadius = 14; // 增加圆角半径
+  const cardRowGap = 16; // 卡片行间距
+  const startX = layout.padding;
+  const startY = layout.workInfoY;
+  
+  infoItems.forEach((item, index) => {
+    const row = Math.floor(index / 2);
+    const col = index % 2;
+    const cardX = startX + col * (cardWidth + cardGap);
+    const cardY = startY + row * (cardHeight + cardRowGap);
+    
+    // 绘制卡片背景（浅灰色，带圆角）
+    drawRoundedRect(posterCtx, cardX, cardY, cardWidth, cardHeight, cardRadius, '#F8F9FA');
+    
+    // 绘制左侧标签背景（紫色渐变，只覆盖左侧部分）
+    const labelBgWidth = 56; // 增加标签宽度
+    const labelBgHeight = cardHeight;
+    
+    // 绘制左侧圆角矩形（带渐变效果）
+    posterCtx.save();
+    const gradient = posterCtx.createLinearGradient(cardX, cardY, cardX + labelBgWidth, cardY + cardHeight);
+    gradient.addColorStop(0, '#6C5CE7');
+    gradient.addColorStop(1, '#8B7ED8');
+    posterCtx.fillStyle = gradient;
+    posterCtx.beginPath();
+    posterCtx.moveTo(cardX + cardRadius, cardY);
+    posterCtx.lineTo(cardX + labelBgWidth, cardY);
+    posterCtx.lineTo(cardX + labelBgWidth, cardY + cardHeight);
+    posterCtx.lineTo(cardX + cardRadius, cardY + cardHeight);
+    posterCtx.quadraticCurveTo(cardX, cardY + cardHeight, cardX, cardY + cardHeight - cardRadius);
+    posterCtx.lineTo(cardX, cardY + cardRadius);
+    posterCtx.quadraticCurveTo(cardX, cardY, cardX + cardRadius, cardY);
+    posterCtx.closePath();
+    posterCtx.fill();
+    posterCtx.restore();
+    
+    // 绘制标签文字（白色，加粗）
+    posterCtx.font = '600 24px "PingFang SC","Helvetica Neue",sans-serif';
+    posterCtx.fillStyle = '#FFFFFF';
+    posterCtx.textAlign = 'center';
+    posterCtx.textBaseline = 'middle';
+    posterCtx.fillText(item.label, cardX + labelBgWidth / 2, cardY + cardHeight / 2);
+    
+    // 绘制值文字（深色，优化字体大小）
+    const valueX = cardX + labelBgWidth + 16; // 增加左边距
+    const maxValueWidth = cardWidth - labelBgWidth - 32; // 增加右边距
+    let displayValue = item.value;
+    
+    // 测量并截断文字
+    posterCtx.font = '500 26px "PingFang SC","Helvetica Neue",sans-serif';
+    posterCtx.textAlign = 'left';
+    const valueMetrics = posterCtx.measureText(displayValue);
+    if (valueMetrics.width > maxValueWidth) {
+      while (posterCtx.measureText(displayValue + '...').width > maxValueWidth && displayValue.length > 0) {
+        displayValue = displayValue.slice(0, -1);
+      }
+      displayValue += '...';
+    }
+    
+    posterCtx.fillStyle = '#2d3436';
+    posterCtx.fillText(displayValue, valueX, cardY + cardHeight / 2);
+  });
+  
   posterCtx.restore();
 }
 
@@ -2031,51 +2664,205 @@ function drawPosterBOM(layout: PosterLayout, items: BOMItem[]) {
   const cardWidth = layout.width - layout.padding * 2;
   let currentY = layout.bomStartY;
   posterCtx.save();
-  posterCtx.font = '600 34px "PingFang SC","Helvetica Neue",sans-serif';
-  posterCtx.fillStyle = '#2d3436';
+  
+  // 标题区域 - 紫色背景白色字体
+  const titleHeight = 56; // 标题区域高度
+  const titlePadding = 20; // 标题左右内边距
+  const titleRadius = 12; // 圆角半径
+  const titleY = currentY - titleHeight / 2; // 标题区域的顶部Y坐标
+  
+  // 绘制紫色背景（圆角矩形）
+  drawRoundedRect(posterCtx, layout.padding, titleY, cardWidth, titleHeight, titleRadius, '#6C5CE7');
+  
+  // 绘制标题文字（白色）
+  posterCtx.font = '600 32px "PingFang SC","Helvetica Neue",sans-serif';
+  posterCtx.fillStyle = '#FFFFFF';
   posterCtx.textAlign = 'left';
-  posterCtx.fillText('材料清单', layout.padding, currentY);
-  posterCtx.font = '400 26px "PingFang SC","Helvetica Neue",sans-serif';
-  posterCtx.fillStyle = '#6C5CE7';
+  posterCtx.textBaseline = 'middle';
+  posterCtx.fillText('拼豆清单', layout.padding + titlePadding, currentY);
+  
+  // 绘制统计信息（白色，右侧对齐）
+  posterCtx.font = '400 24px "PingFang SC","Helvetica Neue",sans-serif';
+  posterCtx.fillStyle = '#FFFFFF';
   posterCtx.textAlign = 'right';
-  posterCtx.fillText(`共 ${totalBeads.value} 颗 / ${uniqueColorCount.value} 色`, layout.width - layout.padding, currentY);
-  currentY += 52;
+  posterCtx.fillText(`共 ${totalBeads.value} 颗 / ${uniqueColorCount.value} 色`, layout.width - layout.padding - titlePadding, currentY);
+  
+  currentY += titleHeight / 2 + 32; // 标题高度的一半 + 与内容的间距
 
-  items.forEach((item, idx) => {
-    const rowY = currentY + idx * layout.bomRowHeight;
-    posterCtx.fillStyle = idx % 2 === 0 ? '#ffffff' : '#f7f8fa';
-    posterCtx.fillRect(layout.padding, rowY, cardWidth, layout.bomRowHeight - 12);
-
-    const circleX = layout.padding + 36;
-    const circleY = rowY + (layout.bomRowHeight - 12) / 2;
-    posterCtx.fillStyle = item.color.hex;
-    posterCtx.beginPath();
-    posterCtx.arc(circleX, circleY, 26, 0, Math.PI * 2);
-    posterCtx.fill();
-
-    posterCtx.fillStyle = '#2d3436';
-    posterCtx.textAlign = 'left';
-    posterCtx.font = '600 30px "PingFang SC","Helvetica Neue",sans-serif';
-    posterCtx.fillText(item.color.name, circleX + 40, circleY);
-
-    posterCtx.fillStyle = '#7f8c8d';
-    posterCtx.font = '400 24px "PingFang SC","Helvetica Neue",sans-serif';
-    posterCtx.fillText(item.color.code || '', circleX + 40, circleY + 26);
-
-    posterCtx.textAlign = 'right';
-    posterCtx.fillStyle = '#6C5CE7';
-    posterCtx.font = '600 30px "PingFang SC","Helvetica Neue",sans-serif';
-    posterCtx.fillText(`${item.count} 颗`, layout.width - layout.padding - 20, circleY + 6);
-  });
-
-  if (bomData.value.length > items.length) {
-    posterCtx.textAlign = 'left';
-    posterCtx.fillStyle = '#7f8c8d';
-    posterCtx.font = '400 22px "PingFang SC","Helvetica Neue",sans-serif';
-    posterCtx.fillText('* 仅展示前 30 种颜色，完整清单请在小程序查看', layout.padding, layout.bomStartY + items.length * layout.bomRowHeight + 20);
+  // 多色一行显示，每行5个颜色
+  const colorsPerRow = 5;
+  const itemWidth = (cardWidth - (colorsPerRow - 1) * 20) / colorsPerRow; // 每个颜色项的宽度，间距20
+  
+  for (let row = 0; row < Math.ceil(items.length / colorsPerRow); row++) {
+    const rowY = currentY + row * layout.bomRowHeight;
+    
+    for (let col = 0; col < colorsPerRow; col++) {
+      const idx = row * colorsPerRow + col;
+      if (idx >= items.length) break;
+      
+      const item = items[idx];
+      const itemX = layout.padding + col * (itemWidth + 20);
+      
+      // 绘制颜色圆圈
+      const circleX = itemX + 28;
+      const circleY = rowY + layout.bomRowHeight / 2;
+      posterCtx.fillStyle = item.color.hex;
+      posterCtx.beginPath();
+      posterCtx.arc(circleX, circleY, 20, 0, Math.PI * 2);
+      posterCtx.fill();
+      
+      // 绘制颜色名称
+      posterCtx.fillStyle = '#2d3436';
+      posterCtx.textAlign = 'left';
+      posterCtx.font = '500 24px "PingFang SC","Helvetica Neue",sans-serif';
+      posterCtx.fillText(item.color.name, circleX + 32, circleY - 8);
+      
+      // 绘制数量
+      posterCtx.fillStyle = '#6C5CE7';
+      posterCtx.font = '600 22px "PingFang SC","Helvetica Neue",sans-serif';
+      posterCtx.fillText(`${item.count}颗`, circleX + 32, circleY + 16);
+    }
   }
 
   posterCtx.restore();
+}
+
+async function drawPosterQRCode(layout: PosterLayout) {
+  if (!posterCtx) return;
+  
+  try {
+    // 使用uni.getImageInfo获取图片信息，这样可以兼容不同平台
+    // 在微信小程序中，static目录下的资源需要使用相对路径或绝对路径
+    let successfulPath = ''; // 保存成功加载的路径
+    const imageInfo = await new Promise<UniApp.GetImageInfoSuccessData>((resolve, reject) => {
+      // 尝试多个可能的路径
+      // 在微信小程序中，static目录会被复制到编译后的根目录
+      // 路径应该相对于小程序根目录
+      // 注意：如果直接在微信开发者工具中上传，路径应该是 /static/qrcode.png 或 /static/qrcode.jpg
+      const paths = [
+        '/static/qrcode.png',           // H5平台和微信小程序（绝对路径，推荐）
+        '/static/qrcode.jpg',           // 支持 jpg 格式
+        'static/qrcode.png',            // 相对路径（微信小程序）
+        'static/qrcode.jpg',            // 相对路径（jpg）
+        './static/qrcode.png',          // 相对路径（带./）
+        './static/qrcode.jpg',          // 相对路径（带./，jpg）
+        'pages/editor/static/qrcode.png', // 页面相对路径
+        'pages/editor/static/qrcode.jpg', // 页面相对路径（jpg）
+        '../static/qrcode.png',         // 相对路径（上一级）
+        '../static/qrcode.jpg',         // 相对路径（上一级，jpg）
+        '../../static/qrcode.png',      // 相对路径（上两级）
+        '../../static/qrcode.jpg',      // 相对路径（上两级，jpg）
+      ];
+      
+      let currentIndex = 0;
+      
+      const tryNextPath = () => {
+        if (currentIndex >= paths.length) {
+          reject(new Error('所有路径都尝试失败'));
+          return;
+        }
+        
+        const currentPath = paths[currentIndex];
+        console.log(`尝试加载二维码路径: ${currentPath}`);
+        
+        uni.getImageInfo({
+          src: currentPath,
+          success: (res) => {
+            console.log(`二维码加载成功，路径: ${currentPath}`, res);
+            successfulPath = currentPath; // 保存成功加载的路径
+            resolve(res);
+          },
+          fail: (err) => {
+            console.warn(`路径 ${currentPath} 加载失败:`, err);
+            currentIndex++;
+            tryNextPath();
+          }
+        });
+      };
+      
+      tryNextPath();
+    });
+    
+    console.log('二维码图片信息获取成功:', imageInfo);
+    console.log('成功加载的路径:', successfulPath);
+    console.log('imageInfo.path:', imageInfo.path);
+    
+    // 在微信小程序中，canvas 的 createImage 可能需要绝对路径
+    // 尝试多个路径格式，确保能找到图片
+    const possiblePaths: string[] = [];
+    
+    // 1. 使用 imageInfo.path（getImageInfo 返回的路径）
+    if (imageInfo.path) {
+      possiblePaths.push(imageInfo.path);
+      // 如果是相对路径，尝试添加前导斜杠
+      if (!imageInfo.path.startsWith('/')) {
+        possiblePaths.push('/' + imageInfo.path);
+      }
+    }
+    
+    // 2. 使用成功加载的原始路径
+    if (successfulPath) {
+      possiblePaths.push(successfulPath);
+      // 如果是相对路径，尝试添加前导斜杠
+      if (!successfulPath.startsWith('/')) {
+        possiblePaths.push('/' + successfulPath);
+      }
+    }
+    
+    // 3. 添加默认路径（支持 png 和 jpg）
+    possiblePaths.push('/static/qrcode.png', '/static/qrcode.jpg', 'static/qrcode.png', 'static/qrcode.jpg');
+    
+    // 去重
+    const uniquePaths = [...new Set(possiblePaths)];
+    console.log('尝试的二维码路径列表:', uniquePaths);
+    
+    // 尝试加载图片，使用第一个成功的路径
+    let qrImage: any = null;
+    let lastError: Error | null = null;
+    
+    for (const path of uniquePaths) {
+      try {
+        console.log(`尝试加载二维码路径: ${path}`);
+        qrImage = await createPosterImage(path);
+        console.log(`二维码加载成功，使用路径: ${path}`);
+        break; // 成功则跳出循环
+      } catch (error) {
+        console.warn(`路径 ${path} 加载失败:`, error);
+        lastError = error as Error;
+        continue; // 继续尝试下一个路径
+      }
+    }
+    
+    if (!qrImage) {
+      throw lastError || new Error('所有二维码路径都加载失败');
+    }
+    
+    // 根据图片原始尺寸计算显示尺寸，保持宽高比
+    // 最大宽度为 480px（进一步扩大），高度按比例缩放
+    const maxWidth = 480;
+    const imageAspectRatio = imageInfo.width / imageInfo.height;
+    let displayWidth = maxWidth;
+    let displayHeight = maxWidth / imageAspectRatio;
+    
+    // 如果高度超过最大宽度，则以高度为准
+    if (displayHeight > maxWidth) {
+      displayHeight = maxWidth;
+      displayWidth = maxWidth * imageAspectRatio;
+    }
+    
+    // 计算居中位置
+    const qrX = (layout.width - displayWidth) / 2;
+    const qrY = layout.qrCodeY;
+    
+    // 直接绘制图片，无边框和阴影，融入整体设计
+    posterCtx.drawImage(qrImage, qrX, qrY, displayWidth, displayHeight);
+    
+    console.log('二维码绘制成功，尺寸:', { width: displayWidth, height: displayHeight, aspectRatio: imageAspectRatio });
+  } catch (error) {
+    // 如果图片加载失败，不绘制占位符，直接跳过
+    // 让长图自然结束，不显示错误信息，保持整体美观
+    console.warn('底部图片加载失败:', error);
+  }
 }
 
 function posterCanvasToTempFile(height: number): Promise<string> {
@@ -2109,14 +2896,39 @@ function createPosterImage(src: string): Promise<any> {
       reject(new Error('长图画布未就绪'));
       return;
     }
+    console.log('createPosterImage 开始加载图片，路径:', src);
     const image = posterCanvas.createImage ? posterCanvas.createImage() : new Image();
-    image.onload = () => resolve(image);
-    image.onerror = (err: any) => reject(err);
+    
+    // 设置超时，避免无限等待
+    const timeout = setTimeout(() => {
+      reject(new Error(`图片加载超时: ${src}`));
+    }, 10000); // 10秒超时
+    
+    image.onload = () => {
+      clearTimeout(timeout);
+      console.log('createPosterImage 图片加载成功:', src);
+      resolve(image);
+    };
+    
+    image.onerror = (err: any) => {
+      clearTimeout(timeout);
+      console.error('createPosterImage 图片加载失败:', src, err);
+      reject(new Error(`图片加载失败: ${src}, 错误: ${err?.message || '未知错误'}`));
+    };
+    
     // @ts-ignore
     if (typeof image.setAttribute === 'function') {
       image.setAttribute('crossOrigin', 'anonymous');
     }
-    image.src = src;
+    
+    try {
+      image.src = src;
+      console.log('createPosterImage 已设置图片路径:', src);
+    } catch (error) {
+      clearTimeout(timeout);
+      console.error('createPosterImage 设置图片路径失败:', error);
+      reject(error);
+    }
   });
 }
 
@@ -2299,7 +3111,18 @@ function exportBOMList() {
   border-bottom: 2rpx solid #F0F0F0;
 }
 
-.nav-left,
+.nav-left {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.nav-left .nav-text {
+  font-size: 28rpx;
+  color: #6C5CE7;
+  font-weight: 500;
+}
+
 .nav-right {
   display: flex;
   align-items: center;
@@ -2312,10 +3135,16 @@ function exportBOMList() {
   justify-content: center;
   padding: 0 20rpx;
   height: 64rpx;
-  border-radius: 999rpx;
-  background-color: rgba(255, 255, 255, 0.15);
-  border: 2rpx solid rgba(255, 255, 255, 0.3);
+  border-radius: 24rpx;
+  background: linear-gradient(135deg, #F8F9FF 0%, #F1EDFF 100%);
+  box-shadow: 0 6rpx 18rpx rgba(108, 92, 231, 0.12);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
   cursor: pointer;
+}
+
+.nav-action:active {
+  transform: translateY(4rpx);
+  box-shadow: 0 2rpx 10rpx rgba(108, 92, 231, 0.2);
 }
 
 .nav-icon {
@@ -2380,6 +3209,22 @@ function exportBOMList() {
    画布区域
    ============================================ */
 
+.canvas-tip {
+  padding: 24rpx 32rpx;
+  background-color: #F0EEFF;
+  border-radius: 16rpx;
+  margin: 0 32rpx 24rpx 32rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.canvas-tip-text {
+  font-size: 28rpx;
+  color: #6C5CE7;
+  font-weight: 500;
+}
+
 .canvas-wrapper {
   width: 100%;
   display: flex;
@@ -2424,6 +3269,161 @@ function exportBOMList() {
   display: block;
   background-color: #FFFFFF;
   box-shadow: 0 4rpx 16rpx rgba(0, 0, 0, 0.1);
+}
+
+/* ============================================
+   作品信息
+   ============================================ */
+
+.work-info-section {
+  background-color: #FFFFFF;
+  border-radius: 24rpx;
+  margin: 0 32rpx 32rpx;
+  padding: 32rpx;
+  box-shadow: 0 10rpx 30rpx rgba(108, 92, 231, 0.08);
+}
+
+.work-info-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24rpx;
+}
+
+.work-info-title {
+  font-size: 32rpx;
+  font-weight: 700;
+  color: #2D3436;
+}
+
+.work-info-tip {
+  font-size: 24rpx;
+  color: #636E72;
+  font-weight: 500;
+}
+
+.work-info-inputs {
+  display: flex;
+  flex-direction: column;
+  gap: 24rpx;
+}
+
+.work-info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 12rpx;
+}
+
+.work-info-label {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #2D3436;
+}
+
+.work-info-input {
+  width: 100%;
+  height: 80rpx;
+  padding: 0 24rpx;
+  border: 2rpx solid #E5E5E5;
+  border-radius: 16rpx;
+  font-size: 28rpx;
+  color: #2D3436;
+  background-color: #F8F9FA;
+  transition: all 0.3s ease;
+  box-sizing: border-box;
+}
+
+.work-info-input:focus {
+  border-color: #6C5CE7;
+  background-color: #FFFFFF;
+}
+
+/* ============================================
+   高级设置板块
+   ============================================ */
+
+.advanced-settings-section {
+  background-color: #FFFFFF;
+  border-radius: 24rpx;
+  margin: 0 32rpx 32rpx;
+  padding: 32rpx;
+  box-shadow: 0 10rpx 30rpx rgba(108, 92, 231, 0.08);
+}
+
+.section-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24rpx;
+}
+
+.section-label {
+  font-size: 32rpx;
+  font-weight: 700;
+  color: #2D3436;
+}
+
+.settings-content {
+  display: flex;
+  flex-direction: column;
+  gap: 24rpx;
+}
+
+.setting-item {
+  display: flex;
+  flex-direction: column;
+  gap: 12rpx;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.setting-label {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #2D3436;
+  flex-shrink: 0;
+}
+
+.setting-input-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  flex-shrink: 0;
+}
+
+.setting-input {
+  width: 120rpx;
+  height: 80rpx;
+  padding: 0 16rpx;
+  border: 2rpx solid #E5E5E5;
+  border-radius: 16rpx;
+  font-size: 28rpx;
+  color: #2D3436;
+  background-color: #F8F9FA;
+  transition: all 0.3s ease;
+  box-sizing: border-box;
+  text-align: center;
+}
+
+.setting-input:focus {
+  border-color: #6C5CE7;
+  background-color: #FFFFFF;
+}
+
+.setting-unit {
+  font-size: 28rpx;
+  color: #636E72;
+  flex-shrink: 0;
+}
+
+.setting-hint {
+  font-size: 24rpx;
+  color: #B2BEC3;
+  margin-top: 4rpx;
 }
 
 /* ============================================
@@ -2681,10 +3681,14 @@ function exportBOMList() {
   background-color: #FFFFFF;
   border-radius: 24rpx 24rpx 0 0;
   width: 100%;
-  max-height: 85vh;
   display: flex;
   flex-direction: column;
   animation: slideUp 0.3s ease;
+}
+
+.color-picker-modal {
+  max-height: 90vh !important;
+  height: auto !important;
 }
 
 @keyframes slideUp {
@@ -2779,6 +3783,178 @@ function exportBOMList() {
 .color-list {
   flex: 1;
   overflow-y: auto;
+  padding: 16rpx;
+  min-height: 0;
+  max-height: 100%;
+}
+
+.eraser-last-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 16rpx;
+  padding: 0 8rpx;
+}
+
+.color-item.eraser-compact {
+  flex: 0 0 auto;
+  width: 200rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8rpx;
+  padding: 12rpx;
+  border-radius: 16rpx;
+  background-color: #F8F9FA;
+  transition: all 0.3s ease;
+}
+
+.color-item.eraser-compact:active {
+  background-color: #E5E5E5;
+  transform: scale(0.98);
+}
+
+.color-preview.eraser-preview-compact {
+  width: 80rpx;
+  height: 80rpx;
+  border-radius: 12rpx;
+  background: linear-gradient(135deg, #FFE5E5 0%, #FFCCCC 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 3rpx solid rgba(0, 0, 0, 0.1);
+  flex-shrink: 0;
+  box-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.1);
+}
+
+.eraser-icon {
+  font-size: 32rpx;
+}
+
+.color-info-compact {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4rpx;
+}
+
+.color-item-name-compact {
+  font-size: 24rpx;
+  font-weight: 600;
+  color: #2D3436;
+  text-align: center;
+}
+
+.check-icon-compact {
+  position: absolute;
+  font-size: 32rpx;
+  color: #FFFFFF;
+  font-weight: bold;
+  text-shadow: 0 2rpx 4rpx rgba(0, 0, 0, 0.3);
+  z-index: 10;
+}
+
+/* 上次选择按钮 - 与橡皮擦按钮样式完全一致 */
+.color-item.last-select-compact {
+  flex: 0 0 auto;
+  width: 200rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8rpx;
+  padding: 12rpx;
+  border-radius: 16rpx;
+  background-color: #F8F9FA;
+  transition: all 0.3s ease;
+}
+
+.color-item.last-select-compact:active {
+  background-color: #E5E5E5;
+  transform: scale(0.98);
+}
+
+.color-preview.last-select-preview-compact {
+  width: 80rpx;
+  height: 80rpx;
+  border-radius: 12rpx;
+  border: 3rpx solid rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.1);
+  position: relative;
+}
+
+.last-select-label {
+  font-size: 24rpx;
+  font-weight: 600;
+  color: #6C5CE7;
+  text-align: center;
+}
+
+.color-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16rpx;
+}
+
+.color-item-grid {
+  flex: 0 0 calc(20% - 13rpx);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 16rpx 8rpx;
+  border-radius: 16rpx;
+  background-color: #FFFFFF;
+  border: 2rpx solid #F0F0F0;
+  transition: all 0.3s ease;
+  position: relative;
+}
+
+.color-item-grid:active {
+  transform: scale(0.95);
+  background-color: #F8F9FA;
+}
+
+.color-item-grid.color-item-selected {
+  background-color: #F0EEFF;
+  border-color: #6C5CE7;
+}
+
+.color-preview-grid {
+  width: 80rpx;
+  height: 80rpx;
+  border-radius: 10rpx;
+  margin-bottom: 8rpx;
+  border: 2rpx solid rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.color-info-grid {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.color-item-name-grid {
+  font-size: 22rpx;
+  font-weight: 600;
+  color: #2D3436;
+  text-align: center;
+}
+
+.check-icon-grid {
+  font-size: 48rpx;
+  color: #FFFFFF;
+  font-weight: 700;
+  text-shadow: 0 2rpx 4rpx rgba(0, 0, 0, 0.3);
+  position: absolute;
+  z-index: 1;
 }
 
 .highlight-inline {
@@ -2888,5 +4064,30 @@ function exportBOMList() {
   color: #6C5CE7;
   font-weight: 700;
   flex-shrink: 0;
+}
+
+/* 网格布局颜色项（5个一行） - 样式已在上面定义 */
+
+.color-info-grid {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.color-item-name-grid {
+  font-size: 22rpx;
+  font-weight: 600;
+  color: #2D3436;
+  text-align: center;
+}
+
+.check-icon-grid {
+  font-size: 48rpx;
+  color: #FFFFFF;
+  font-weight: 700;
+  text-shadow: 0 2rpx 4rpx rgba(0, 0, 0, 0.3);
+  position: absolute;
+  z-index: 1;
 }
 </style>
