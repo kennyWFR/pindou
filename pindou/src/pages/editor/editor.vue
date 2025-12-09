@@ -391,7 +391,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick } from 'vue';
 import type { BrandKey, PaletteColor, ColorAlgorithm } from '../types/index';
-import { findClosestColor, findClosestColorLab } from '@/utils/colorMatcher';
+import { findClosestColorLab } from '@/utils/colorMatcher';
 import { BRAND_LIST, getBrandPalette } from '@/utils/paletteData';
 import { preprocessImageData, getDominantColor } from '@/utils/imageProcessor';
 
@@ -427,6 +427,7 @@ interface PosterLayout {
   bomRowHeight: number;
   qrCodeY: number;
   qrCodeSize: number;
+  qrCodeX?: number; // 二维码X位置（右上角）
 }
 
 // ============================================
@@ -541,7 +542,7 @@ const topBomItem = computed(() => bomData.value[0] || null);
 const restBomItems = computed(() => bomData.value.slice(1));
 
 const algorithmLabel = computed(() =>
-  colorAlgorithm.value === 'enhanced' ? '标准图像' : '图像锐化'
+  colorAlgorithm.value === 'enhanced' ? '众数取色' : '均值取色'
 );
 const beadShapeLabel = computed(() =>
   beadShape.value === 'circle' ? '方形拼豆' : '圆形色块'
@@ -760,8 +761,9 @@ async function initDisplayCanvas(): Promise<void> {
           return;
         }
 
-        canvasViewWidth.value = gridWidth.value * beadSize.value;
-        canvasViewHeight.value = gridHeight.value * beadSize.value;
+        const axisWidth = 0; // 不再预留坐标轴空间
+        canvasViewWidth.value = gridWidth.value * beadSize.value + axisWidth;
+        canvasViewHeight.value = gridHeight.value * beadSize.value + axisWidth;
 
         displayCanvas.width = canvasViewWidth.value * dpr;
         displayCanvas.height = canvasViewHeight.value * dpr;
@@ -981,7 +983,8 @@ function pixelateAndMatch(sourceImage: ImageData) {
 
   const grid: GridCell[][] = [];
   const colorCountMap = new Map<string, { color: PaletteColor; count: number }>();
-  const matchFn = useEnhanced ? findClosestColorLab : findClosestColor;
+  // 标准与锐化均使用 LAB 欧氏距离匹配
+  const matchFn = findClosestColorLab;
 
   for (let y = 0; y < gridHeight.value; y++) {
     const row: GridCell[] = [];
@@ -1181,7 +1184,8 @@ function pixelateAndMatchPixelImage(
   
   const grid: GridCell[][] = [];
   const colorCountMap = new Map<string, { color: PaletteColor; count: number }>();
-  const matchFn = findClosestColor;
+  // 像素模式也统一使用 LAB 欧氏距离匹配
+  const matchFn = findClosestColorLab;
   
   for (let gridY = 0; gridY < gridRows; gridY++) {
     const row: GridCell[] = [];
@@ -1291,8 +1295,9 @@ function updateCanvasLayout() {
   if (isH5.value) {
     const baseBeadSize = 24;
     beadSize.value = baseBeadSize;
-    canvasViewWidth.value = Math.round(gridWidth.value * beadSize.value);
-    canvasViewHeight.value = Math.round(gridHeight.value * beadSize.value);
+    const axisWidth = 0; // 不再预留坐标轴空间
+    canvasViewWidth.value = Math.round(gridWidth.value * beadSize.value + axisWidth);
+    canvasViewHeight.value = Math.round(gridHeight.value * beadSize.value + axisWidth);
 
     const horizontalPadding = 120;
     const verticalPadding = 280;
@@ -1305,12 +1310,13 @@ function updateCanvasLayout() {
     const verticalReserved = viewportWidth >= 768 ? 320 : 420;
     const maxCanvasWidth = Math.max(320, viewportWidth - horizontalPadding);
     const maxCanvasHeight = Math.max(320, viewportHeight - verticalReserved);
-    const sizeByWidth = maxCanvasWidth / gridWidth.value;
-    const sizeByHeight = maxCanvasHeight / gridHeight.value;
-    const optimalSize = Math.max(8, Math.min(sizeByWidth, sizeByHeight, 28));
-    beadSize.value = Number(optimalSize.toFixed(2));
-    canvasViewWidth.value = Math.round(beadSize.value * gridWidth.value);
-    canvasViewHeight.value = Math.round(beadSize.value * gridHeight.value);
+      const axisWidth = 0; // 不再预留坐标轴空间
+      const sizeByWidth = (maxCanvasWidth - axisWidth) / gridWidth.value;
+      const sizeByHeight = (maxCanvasHeight - axisWidth) / gridHeight.value;
+      const optimalSize = Math.max(8, Math.min(sizeByWidth, sizeByHeight, 28));
+      beadSize.value = Number(optimalSize.toFixed(2));
+      canvasViewWidth.value = Math.round(beadSize.value * gridWidth.value + axisWidth);
+      canvasViewHeight.value = Math.round(beadSize.value * gridHeight.value + axisWidth);
     displayScale.value = 1;
   }
 
@@ -1482,6 +1488,9 @@ function drawBeads() {
   }
 }
 
+// 绘制编辑器画布的坐标轴
+// 坐标轴已取消，不再绘制
+
 function drawBead(x: number, y: number, color: PaletteColor, isHighlighted: boolean, isDimmed: boolean = false) {
   if (!displayCtx) return;
   
@@ -1597,6 +1606,7 @@ function drawGridLines() {
   displayCtx.strokeStyle = 'rgba(0, 0, 0, 0.1)';
   displayCtx.lineWidth = 0.5;
   
+  // 绘制垂直线
   for (let x = 0; x <= gridWidth.value; x++) {
     displayCtx.beginPath();
     displayCtx.moveTo(x * beadSize.value, 0);
@@ -1604,6 +1614,7 @@ function drawGridLines() {
     displayCtx.stroke();
   }
   
+  // 绘制水平线
   for (let y = 0; y <= gridHeight.value; y++) {
     displayCtx.beginPath();
     displayCtx.moveTo(0, y * beadSize.value);
@@ -1651,7 +1662,8 @@ function handleCanvasTap(e: any) {
 }
 
 function focusCellAt(canvasX: number, canvasY: number) {
-  const gridX = Math.floor(canvasX / beadSize.value);
+  const adjustedX = canvasX;
+  const gridX = Math.floor(adjustedX / beadSize.value);
   const gridY = Math.floor(canvasY / beadSize.value);
 
   if (gridX < 0 || gridX >= gridWidth.value || gridY < 0 || gridY >= gridHeight.value) {
@@ -1805,7 +1817,7 @@ function toggleColorCodes() {
 async function toggleAlgorithm() {
   colorAlgorithm.value = colorAlgorithm.value === 'enhanced' ? 'standard' : 'enhanced';
   uni.showToast({
-    title: colorAlgorithm.value === 'enhanced' ? '已启用图像锐化' : '切换到标准图像',
+    title: colorAlgorithm.value === 'enhanced' ? '已切换到众数取色' : '已切换到均值取色',
     icon: 'none',
     duration: 1200
   });
@@ -2385,91 +2397,49 @@ function resizePosterCanvas(targetHeight: number) {
 }
 
 async function computePosterLayout(items: BOMItem[]): Promise<PosterLayout> {
-  const padding = 60; // 整体内边距
+  const padding = 40; // 压缩整体内边距
   const width = POSTER_WIDTH;
-  const titleHeight = 80; // 标题区域高度
-  const titleTopMargin = 50; // 标题距离顶部的距离
-  const titleToWorkInfoGap = 80; // 标题和作品信息（品牌、尺寸）之间的间距（提高一倍）
   
-  // 计算作品信息区域实际高度（根据实际卡片数量）
-  const infoItemsCount = (workName.value.trim() ? 1 : 0) + (authorName.value.trim() ? 1 : 0) + 2; // 作品、作者（可选）+ 品牌、尺寸
-  const cardHeight = 56; // 卡片高度
-  const cardRowGap = 16; // 卡片行间距
-  const workInfoRows = Math.ceil(infoItemsCount / 2); // 每行2个卡片
-  const workInfoHeight = workInfoRows * cardHeight + (workInfoRows - 1) * cardRowGap + 30; // 实际高度 + 上下边距
+  // 顶部区域：标题 + 二维码
+  const topBarHeight = 100; // 顶部标题栏高度
+  const qrCodeSize = 120; // 右上角二维码尺寸（缩小）
+  const qrCodePadding = 20; // 二维码内边距
   
-  const gap = 45; // 作品信息和图片之间的间距（增加间距防止重叠）
-  const imageGap = 80; // 图片和拼豆清单之间的留白（进一步增大，提升视觉层次）
-  const imageWidth = width - padding * 2;
+  // 图纸区域（占据主要空间，提高占比）
+  const imagePadding = 20; // 图纸周围的小间距
+  const imageWidth = width - padding * 2 - imagePadding * 2;
   const aspectRatio = canvasViewHeight.value > 0 ? (canvasViewHeight.value / canvasViewWidth.value) : 1;
   const imageHeight = Math.round(imageWidth * aspectRatio);
   
-  // 计算材料清单高度：多色一行显示，每行5个颜色
-  const colorsPerRow = 5;
-  const bomRowHeight = 80; // 每行高度
-  const bomRows = Math.ceil(items.length / colorsPerRow);
-  const bomHeight = bomRows * bomRowHeight + 100; // 标题+内容+底部间距
+  // 底部色号清单（密集排列在1-2行）
+  const bomItemHeight = 50; // 每个色号项的高度
+  const bomItemGap = 12; // 色号项之间的间距
+  const bomMaxItemsPerRow = Math.floor((width - padding * 2) / 120); // 根据宽度计算每行能放多少个（每个约120px宽）
+  const bomRows = Math.ceil(items.length / bomMaxItemsPerRow);
+  const bomTitleHeight = 40; // 标题高度
+  const bomHeight = bomTitleHeight + bomRows * bomItemHeight + (bomRows > 0 ? (bomRows - 1) * 8 : 0) + 20; // 标题+内容+底部间距
   
-  // 底部图片区域（进一步扩大，从360px增加到480px）
-  // 先尝试获取图片信息，根据实际尺寸计算高度，避免预留过多空白
-  const bottomImageMaxSize = 480;
-  const bottomImagePadding = 20; // 减少底部间距，只保留少量留白
-  
-  // 尝试获取底部图片信息来计算实际高度
-  // 如果获取失败，使用估算值（假设图片是横向的，宽高比约1.2:1）
-  let bottomImageHeight = bottomImageMaxSize;
-  try {
-    // 尝试获取图片信息
-    const imageInfo = await new Promise<UniApp.GetImageInfoSuccessData>((resolve, reject) => {
-      const paths = ['/static/qrcode.png', '/static/qrcode.jpg', 'static/qrcode.png', 'static/qrcode.jpg'];
-      let currentIndex = 0;
-      const tryNextPath = () => {
-        if (currentIndex >= paths.length) {
-          reject(new Error('无法获取图片信息'));
-          return;
-        }
-        uni.getImageInfo({
-          src: paths[currentIndex],
-          success: resolve,
-          fail: () => {
-            currentIndex++;
-            tryNextPath();
-          }
-        });
-      };
-      tryNextPath();
-    });
-    
-    // 根据图片实际尺寸计算显示高度
-    const maxWidth = 480;
-    const imageAspectRatio = imageInfo.width / imageInfo.height;
-    bottomImageHeight = imageAspectRatio > 1 
-      ? maxWidth / imageAspectRatio  // 横向图片，高度更小
-      : Math.min(maxWidth, maxWidth * imageAspectRatio); // 纵向图片
-  } catch (error) {
-    // 如果获取失败，使用估算值（假设是横向图片，高度约为宽度的0.8倍）
-    bottomImageHeight = bottomImageMaxSize * 0.8;
-  }
-  
-  const height = padding + titleTopMargin + titleHeight + titleToWorkInfoGap + workInfoHeight + gap + imageHeight + imageGap + bomHeight + gap + bottomImageHeight + bottomImagePadding + padding;
+  // 计算总高度：顶部栏 + 图纸 + 底部清单
+  const height = padding + topBarHeight + imagePadding + imageHeight + imagePadding + bomHeight + padding;
 
   return {
     width,
     height,
     padding,
-    titleY: padding + titleTopMargin,
-    metaStartY: padding + titleTopMargin + titleHeight + titleToWorkInfoGap,
-    workInfoY: padding + titleTopMargin + titleHeight + titleToWorkInfoGap, // 标题和作品信息之间的间距提高一倍
+    titleY: padding + topBarHeight / 2, // 标题垂直居中在顶部栏
+    metaStartY: 0, // 不再使用
+    workInfoY: 0, // 不再使用
     image: {
-      x: padding,
-      y: padding + titleTopMargin + titleHeight + titleToWorkInfoGap + workInfoHeight + gap, // 确保在作品信息下方
+      x: padding + imagePadding,
+      y: padding + topBarHeight + imagePadding,
       width: imageWidth,
       height: imageHeight
     },
-    bomStartY: padding + titleTopMargin + titleHeight + titleToWorkInfoGap + workInfoHeight + gap + imageHeight + imageGap,
-    bomRowHeight: bomRowHeight,
-    qrCodeY: padding + titleTopMargin + titleHeight + titleToWorkInfoGap + workInfoHeight + gap + imageHeight + imageGap + bomHeight + gap,
-    qrCodeSize: bottomImageMaxSize // 保持接口兼容性，但实际使用时会根据图片宽高比计算
+    bomStartY: padding + topBarHeight + imagePadding + imageHeight + imagePadding,
+    bomRowHeight: bomItemHeight,
+    qrCodeY: padding + qrCodePadding, // 二维码在右上角
+    qrCodeSize: qrCodeSize,
+    qrCodeX: width - padding - qrCodeSize - qrCodePadding // 二维码X位置（右上角）
   };
 }
 
@@ -2484,11 +2454,11 @@ async function drawPoster(snapshotPath: string, layout: PosterLayout, items: BOM
   posterCtx.fillStyle = '#FFFFFF';
   posterCtx.fillRect(0, 0, layout.width, layout.height);
 
+  // 绘制顺序：标题、二维码、图纸、色号清单
   drawPosterHeader(layout);
-  drawPosterWorkInfo(layout);
+  await drawPosterQRCode(layout); // 二维码在右上角
   await drawPosterImage(snapshotPath, layout);
-  drawPosterBOM(layout, items);
-  await drawPosterQRCode(layout);
+  drawPosterBOM(layout, items); // 密集排列的色号清单
   
   // 添加稀疏倾斜重复水印（如果有）
   if (watermarkText.value && posterCtx) {
@@ -2531,11 +2501,12 @@ async function drawPoster(snapshotPath: string, layout: PosterLayout, items: BOM
 function drawPosterHeader(layout: PosterLayout) {
   if (!posterCtx) return;
   posterCtx.save();
-  posterCtx.fillStyle = '#6C5CE7'; // 淡紫色，和"共**颗/**色"保持一致
-  posterCtx.font = '700 56px "PingFang SC","Helvetica Neue",sans-serif';
-  posterCtx.textAlign = 'center';
-  posterCtx.textBaseline = 'top';
-  posterCtx.fillText('拼豆魔法工坊', layout.width / 2, layout.titleY);
+  // 标题在左侧
+  posterCtx.fillStyle = '#6C5CE7';
+  posterCtx.font = '700 48px "PingFang SC","Helvetica Neue",sans-serif';
+  posterCtx.textAlign = 'left';
+  posterCtx.textBaseline = 'middle';
+  posterCtx.fillText('拼豆魔法工坊', layout.padding, layout.titleY);
   posterCtx.restore();
 }
 
@@ -2687,40 +2658,42 @@ function drawPosterBOM(layout: PosterLayout, items: BOMItem[]) {
   posterCtx.textAlign = 'right';
   posterCtx.fillText(`共 ${totalBeads.value} 颗 / ${uniqueColorCount.value} 色`, layout.width - layout.padding - titlePadding, currentY);
   
-  currentY += titleHeight / 2 + 32; // 标题高度的一半 + 与内容的间距
+  currentY += titleHeight / 2 + 12; // 标题高度的一半 + 与内容的间距（压缩）
 
-  // 多色一行显示，每行5个颜色
-  const colorsPerRow = 5;
-  const itemWidth = (cardWidth - (colorsPerRow - 1) * 20) / colorsPerRow; // 每个颜色项的宽度，间距20
+  // 密集排列：每行尽可能多的颜色，每个色号项约110px宽
+  const itemWidth = 110; // 每个色号项的宽度
+  const itemGap = 12; // 色号项之间的间距
+  const maxItemsPerRow = Math.floor((cardWidth) / (itemWidth + itemGap)); // 计算每行能放多少个
   
-  for (let row = 0; row < Math.ceil(items.length / colorsPerRow); row++) {
+  for (let row = 0; row < Math.ceil(items.length / maxItemsPerRow); row++) {
     const rowY = currentY + row * layout.bomRowHeight;
     
-    for (let col = 0; col < colorsPerRow; col++) {
-      const idx = row * colorsPerRow + col;
+    for (let col = 0; col < maxItemsPerRow; col++) {
+      const idx = row * maxItemsPerRow + col;
       if (idx >= items.length) break;
       
       const item = items[idx];
-      const itemX = layout.padding + col * (itemWidth + 20);
+      const itemX = layout.padding + col * (itemWidth + itemGap);
       
-      // 绘制颜色圆圈
-      const circleX = itemX + 28;
+      // 绘制颜色圆圈（缩小）
+      const circleX = itemX + 20;
       const circleY = rowY + layout.bomRowHeight / 2;
+      const circleRadius = 14; // 缩小圆圈
       posterCtx.fillStyle = item.color.hex;
       posterCtx.beginPath();
-      posterCtx.arc(circleX, circleY, 20, 0, Math.PI * 2);
+      posterCtx.arc(circleX, circleY, circleRadius, 0, Math.PI * 2);
       posterCtx.fill();
       
-      // 绘制颜色名称
+      // 绘制颜色名称和数量（紧凑排列）
       posterCtx.fillStyle = '#2d3436';
       posterCtx.textAlign = 'left';
-      posterCtx.font = '500 24px "PingFang SC","Helvetica Neue",sans-serif';
-      posterCtx.fillText(item.color.name, circleX + 32, circleY - 8);
+      posterCtx.font = '500 20px "PingFang SC","Helvetica Neue",sans-serif';
+      posterCtx.fillText(item.color.name, circleX + 22, circleY - 6);
       
       // 绘制数量
       posterCtx.fillStyle = '#6C5CE7';
-      posterCtx.font = '600 22px "PingFang SC","Helvetica Neue",sans-serif';
-      posterCtx.fillText(`${item.count}颗`, circleX + 32, circleY + 16);
+      posterCtx.font = '600 18px "PingFang SC","Helvetica Neue",sans-serif';
+      posterCtx.fillText(`${item.count}颗`, circleX + 22, circleY + 12);
     }
   }
 
@@ -2838,20 +2811,20 @@ async function drawPosterQRCode(layout: PosterLayout) {
     }
     
     // 根据图片原始尺寸计算显示尺寸，保持宽高比
-    // 最大宽度为 480px（进一步扩大），高度按比例缩放
-    const maxWidth = 480;
+    // 二维码在右上角，尺寸固定为 layout.qrCodeSize
+    const qrSize = layout.qrCodeSize;
     const imageAspectRatio = imageInfo.width / imageInfo.height;
-    let displayWidth = maxWidth;
-    let displayHeight = maxWidth / imageAspectRatio;
+    let displayWidth = qrSize;
+    let displayHeight = qrSize / imageAspectRatio;
     
-    // 如果高度超过最大宽度，则以高度为准
-    if (displayHeight > maxWidth) {
-      displayHeight = maxWidth;
-      displayWidth = maxWidth * imageAspectRatio;
+    // 如果高度超过宽度，则以高度为准
+    if (displayHeight > qrSize) {
+      displayHeight = qrSize;
+      displayWidth = qrSize * imageAspectRatio;
     }
     
-    // 计算居中位置
-    const qrX = (layout.width - displayWidth) / 2;
+    // 计算右上角位置
+    const qrX = layout.qrCodeX || (layout.width - layout.padding - displayWidth);
     const qrY = layout.qrCodeY;
     
     // 直接绘制图片，无边框和阴影，融入整体设计

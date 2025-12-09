@@ -15,6 +15,8 @@ export interface PaletteColor {
   hex: string;
   /** RGB 数组 [R, G, B]，范围 0-255 */
   rgb: [number, number, number];
+  /** CIELAB 数组 [L, a, b] */
+  lab: [number, number, number];
 }
 
 /**
@@ -32,6 +34,7 @@ export type BrandKey =
  * 品牌色卡数据结构
  */
 export type BrandPalettes = Record<BrandKey, PaletteColor[]>;
+export type BrandPaletteLabs = Record<BrandKey, [number, number, number][]>;
 
 /**
  * 品牌显示信息

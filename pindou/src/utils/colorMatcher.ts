@@ -4,10 +4,9 @@
  */
 
 import type { BrandKey, PaletteColor, ColorMatchResult } from '../types/index';
-import { BRAND_PALETTES } from './paletteData';
+import { BRAND_PALETTES, BRAND_PALETTES_LAB } from './paletteData';
 
 type LabTuple = [number, number, number];
-const paletteLabCache: Partial<Record<BrandKey, LabTuple[]>> = {};
 
 /**
  * 计算两个 RGB 颜色之间的欧几里得距离
@@ -99,7 +98,10 @@ export function findClosestColorLab(
   }
 
   const targetLab = rgbToLab(targetRgb);
-  const labPalette = getPaletteLab(brandKey, palette);
+  const labPalette = BRAND_PALETTES_LAB[brandKey];
+  if (!labPalette || labPalette.length === 0) {
+    throw new Error(`品牌 "${brandKey}" 的 LAB 色卡数据不存在或为空`);
+  }
 
   let closestColor: PaletteColor = palette[0];
   let minDistance = deltaE(targetLab, labPalette[0]);
@@ -182,13 +184,6 @@ export function findClosestColorByHex(
 ): ColorMatchResult {
   const rgb = hexToRgb(hexColor);
   return findClosestColor(rgb, brandKey);
-}
-
-function getPaletteLab(brandKey: BrandKey, palette: PaletteColor[]): LabTuple[] {
-  if (!paletteLabCache[brandKey]) {
-    paletteLabCache[brandKey] = palette.map(color => rgbToLab(color.rgb));
-  }
-  return paletteLabCache[brandKey]!;
 }
 
 function rgbToLab(rgb: [number, number, number]): LabTuple {

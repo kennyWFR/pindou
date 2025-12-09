@@ -26,14 +26,47 @@ function processColorData(rawData: Array<{ name: string; color: string }>): Pale
   return rawData.map(item => {
     const hex = `#${item.color}`;
     const rgb = hexToRgb(item.color);
+    const lab = rgbToLab(rgb);
     
     return {
       name: item.name,
       code: item.color,
       hex,
-      rgb
+      rgb,
+      lab
     };
   });
+}
+
+/**
+ * RGB 转 CIELAB（D65）
+ */
+function rgbToLab(rgb: [number, number, number]): [number, number, number] {
+  const [r, g, b] = rgb.map(value => {
+    let channel = value / 255;
+    channel = channel > 0.04045 ? Math.pow((channel + 0.055) / 1.055, 2.4) : channel / 12.92;
+    return channel * 100;
+  }) as [number, number, number];
+
+  let x = r * 0.4124 + g * 0.3576 + b * 0.1805;
+  let y = r * 0.2126 + g * 0.7152 + b * 0.0722;
+  let z = r * 0.0193 + g * 0.1192 + b * 0.9505;
+
+  x /= 95.047;
+  y /= 100;
+  z /= 108.883;
+
+  const pivot = (value: number) =>
+    value > 0.008856 ? Math.cbrt(value) : (7.787 * value) + (16 / 116);
+
+  const fx = pivot(x);
+  const fy = pivot(y);
+  const fz = pivot(z);
+
+  const L = (116 * fy) - 16;
+  const a = 500 * (fx - fy);
+  const bVal = 200 * (fy - fz);
+  return [L, a, bVal];
 }
 
 /**
@@ -90,6 +123,16 @@ export const BRAND_LIST: BrandInfo[] = [
 export function getBrandPalette(brandKey: BrandKey): PaletteColor[] {
   return BRAND_PALETTES[brandKey] || [];
 }
+
+/**
+ * 品牌色卡的 LAB 数组（预计算，避免运行时重复转换）
+ */
+export const BRAND_PALETTES_LAB: Record<BrandKey, [number, number, number][]> = Object.fromEntries(
+  Object.entries(BRAND_PALETTES).map(([key, palette]) => [
+    key as BrandKey,
+    palette.map(color => color.lab)
+  ])
+) as Record<BrandKey, [number, number, number][]>;
 
 /**
  * 获取所有品牌的键名列表
