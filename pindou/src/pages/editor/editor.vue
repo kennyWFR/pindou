@@ -112,6 +112,8 @@
             :scale-max="3"
             :scale-animation="false"
             :inertia="false"
+            :x="movableX"
+            :y="movableY"
             @scale="handleScale"
             :style="{
               width: canvasViewWidth + 'px',
@@ -197,24 +199,6 @@
           <text class="work-info-tip">导出长图时添加署名标记</text>
         </view>
         <view class="work-info-inputs">
-          <view class="work-info-item">
-            <text class="work-info-label">作品名称</text>
-            <input
-              v-model="workName"
-              class="work-info-input"
-              placeholder="请输入作品名称（可选）"
-              maxlength="20"
-            />
-          </view>
-          <view class="work-info-item">
-            <text class="work-info-label">作者名称</text>
-            <input
-              v-model="authorName"
-              class="work-info-input"
-              placeholder="请输入作者名称（可选）"
-              maxlength="20"
-            />
-          </view>
           <view class="work-info-item">
             <text class="work-info-label">水印内容</text>
             <input
@@ -427,7 +411,8 @@ interface PosterLayout {
   bomRowHeight: number;
   qrCodeY: number;
   qrCodeSize: number;
-  qrCodeX?: number; // 二维码X位置（右上角）
+  qrCodeX?: number; // 二维码X位置
+  labelAreaSize?: number; // 坐标格子区域大小
 }
 
 // ============================================
@@ -493,6 +478,8 @@ const highlightColor = ref<string | null>(null);
 const toolsOffsetTop = ref<number>(0);
 const colorPickerHeight = ref<number>(1200);
 const movableKey = ref<number>(0);
+const movableX = ref<number>(0); // movable-view的初始X位置（用于居中）
+const movableY = ref<number>(0); // movable-view的初始Y位置（用于居中）
 const showColorPicker = ref<boolean>(false);
 const selectedCell = ref<GridCell | null>(null);
 const isZooming = ref<boolean>(false);
@@ -1328,6 +1315,29 @@ function updateCanvasLayout() {
   const paddedHeight = Math.round(scaledHeight + 30);
   canvasPanelHeight.value = Math.min(Math.max(paddedHeight, minPanel), maxPanel);
 
+  // 计算movable-view的居中位置（非H5平台）
+  if (!isH5.value) {
+    // movable-area的宽度是100%，所以可用宽度是viewportWidth（px单位）
+    // 计算canvas在容器中的居中位置
+    const areaWidth = viewportWidth;
+    const areaHeight = canvasPanelHeight.value;
+    // movable-view默认从(0,0)开始，需要计算居中偏移
+    // 居中位置 = (容器宽度 - canvas宽度) / 2
+    // 注意：movable-view的x和y使用px单位
+    const newX = Math.max(0, (areaWidth - canvasViewWidth.value) / 2);
+    const newY = Math.max(0, (areaHeight - canvasViewHeight.value) / 2);
+    
+    // 如果位置发生变化，更新并触发movable-view重新定位
+    if (Math.abs(movableX.value - newX) > 1 || Math.abs(movableY.value - newY) > 1) {
+      movableX.value = newX;
+      movableY.value = newY;
+      // 更新movableKey以触发movable-view重新定位
+      nextTick(() => {
+        movableKey.value += 1;
+      });
+    }
+  }
+
   measureToolsOffset();
 
   console.log('画布布局更新:', {
@@ -1570,7 +1580,8 @@ function drawBead(x: number, y: number, color: PaletteColor, isHighlighted: bool
 function drawColorCode(centerX: number, centerY: number, color: PaletteColor) {
   if (!displayCtx || !showCodes.value) return;
   
-  const fontSize = Math.max(4, Math.min(beadSize.value * 0.24, 9));
+  // 稍微缩小字体（从0.24改为0.20）
+  const fontSize = Math.max(4, Math.min(beadSize.value * 0.20, 8));
   const text = color.name;
   
   displayCtx.save();
@@ -2397,30 +2408,79 @@ function resizePosterCanvas(targetHeight: number) {
 }
 
 async function computePosterLayout(items: BOMItem[]): Promise<PosterLayout> {
-  const padding = 40; // 压缩整体内边距
   const width = POSTER_WIDTH;
+  const padding = 0; // 左右不留空隙，坐标格子紧贴屏幕边缘
   
-  // 顶部区域：标题 + 二维码
+  // 顶部区域：二维码 + 标题信息
   const topBarHeight = 100; // 顶部标题栏高度
-  const qrCodeSize = 120; // 右上角二维码尺寸（缩小）
+  const qrCodeSize = 80; // 左上角二维码尺寸
   const qrCodePadding = 20; // 二维码内边距
   
-  // 图纸区域（占据主要空间，提高占比）
-  const imagePadding = 20; // 图纸周围的小间距
-  const imageWidth = width - padding * 2 - imagePadding * 2;
+  // 图纸区域（需要居中，并考虑坐标格子）
+  const imagePadding = 20; // 图纸周围的小间距（仅上下）
   const aspectRatio = canvasViewHeight.value > 0 ? (canvasViewHeight.value / canvasViewWidth.value) : 1;
-  const imageHeight = Math.round(imageWidth * aspectRatio);
   
-  // 底部色号清单（密集排列在1-2行）
+  // 可用空间（考虑坐标格子）
+  const availableWidth = width; // 全屏宽度，坐标格子紧贴左右边缘
+  
+  // 迭代计算合适的尺寸，确保图纸和坐标格子都在屏幕内
+  // 坐标格子大小取决于图纸尺寸，需要迭代求解
+  let imageWidth = availableWidth;
+  let imageHeight = Math.round(imageWidth * aspectRatio);
+  let cellWidth = imageWidth / gridWidth.value;
+  let cellHeight = imageHeight / gridHeight.value;
+  let labelAreaSize = Math.max(cellWidth, cellHeight);
+  let totalWidth = imageWidth + labelAreaSize * 2;
+  
+  // 如果超出宽度，需要缩小
+  if (totalWidth > availableWidth) {
+    // 解方程：imageWidth + labelAreaSize * 2 = availableWidth
+    // labelAreaSize = max(imageWidth/gridWidth, imageHeight/gridHeight)
+    // 需要迭代求解
+    for (let i = 0; i < 10; i++) { // 最多迭代10次
+      const prevLabelSize = labelAreaSize;
+      imageWidth = availableWidth - labelAreaSize * 2;
+      imageHeight = Math.round(imageWidth * aspectRatio);
+      cellWidth = imageWidth / gridWidth.value;
+      cellHeight = imageHeight / gridHeight.value;
+      labelAreaSize = Math.max(cellWidth, cellHeight);
+      totalWidth = imageWidth + labelAreaSize * 2;
+      
+      // 如果收敛或满足条件，退出
+      if (Math.abs(labelAreaSize - prevLabelSize) < 0.1 || totalWidth <= availableWidth) {
+        break;
+      }
+    }
+    
+    // 确保不超过可用宽度
+    if (totalWidth > availableWidth) {
+      const scale = availableWidth / totalWidth;
+      imageWidth = Math.floor(imageWidth * scale);
+      imageHeight = Math.round(imageWidth * aspectRatio);
+      cellWidth = imageWidth / gridWidth.value;
+      cellHeight = imageHeight / gridHeight.value;
+      labelAreaSize = Math.max(cellWidth, cellHeight);
+      totalWidth = imageWidth + labelAreaSize * 2;
+    }
+  }
+  
+  const totalHeight = imageHeight + labelAreaSize * 2;
+  
+  // 计算居中位置（坐标格子紧贴左右边缘）
+  const imageX = labelAreaSize; // 左侧坐标格子紧贴屏幕左边缘
+  const imageY = padding + topBarHeight + imagePadding + labelAreaSize;
+  
+  // 底部色号清单（使用圆角矩形，移除标题，只保留内容）
   const bomItemHeight = 50; // 每个色号项的高度
   const bomItemGap = 12; // 色号项之间的间距
-  const bomMaxItemsPerRow = Math.floor((width - padding * 2) / 120); // 根据宽度计算每行能放多少个（每个约120px宽）
+  // 估算每个色号项的宽度（实际会在drawPosterBOM中动态计算）
+  const estimatedItemWidth = 150; // 估算宽度，用于计算每行能放多少个
+  const bomMaxItemsPerRow = Math.floor(width / (estimatedItemWidth + bomItemGap)); // 根据宽度计算每行能放多少个
   const bomRows = Math.ceil(items.length / bomMaxItemsPerRow);
-  const bomTitleHeight = 40; // 标题高度
-  const bomHeight = bomTitleHeight + bomRows * bomItemHeight + (bomRows > 0 ? (bomRows - 1) * 8 : 0) + 20; // 标题+内容+底部间距
+  const bomHeight = bomRows * bomItemHeight + (bomRows > 0 ? (bomRows - 1) * bomItemGap : 0) + 20; // 内容+底部间距（移除标题高度）
   
-  // 计算总高度：顶部栏 + 图纸 + 底部清单
-  const height = padding + topBarHeight + imagePadding + imageHeight + imagePadding + bomHeight + padding;
+  // 计算总高度：顶部栏 + 图纸（含上下坐标格子）+ 底部清单
+  const height = padding + topBarHeight + imagePadding + totalHeight + imagePadding + bomHeight + padding;
 
   return {
     width,
@@ -2430,16 +2490,17 @@ async function computePosterLayout(items: BOMItem[]): Promise<PosterLayout> {
     metaStartY: 0, // 不再使用
     workInfoY: 0, // 不再使用
     image: {
-      x: padding + imagePadding,
-      y: padding + topBarHeight + imagePadding,
+      x: imageX,
+      y: imageY,
       width: imageWidth,
       height: imageHeight
     },
-    bomStartY: padding + topBarHeight + imagePadding + imageHeight + imagePadding,
+    bomStartY: padding + topBarHeight + imagePadding + totalHeight + imagePadding,
     bomRowHeight: bomItemHeight,
-    qrCodeY: padding + qrCodePadding, // 二维码在右上角
+    qrCodeY: padding + qrCodePadding, // 二维码在左上角
     qrCodeSize: qrCodeSize,
-    qrCodeX: width - padding - qrCodeSize - qrCodePadding // 二维码X位置（右上角）
+    qrCodeX: padding + qrCodePadding, // 二维码X位置（左上角）
+    labelAreaSize // 添加标号区域大小，供绘制函数使用
   };
 }
 
@@ -2454,9 +2515,9 @@ async function drawPoster(snapshotPath: string, layout: PosterLayout, items: BOM
   posterCtx.fillStyle = '#FFFFFF';
   posterCtx.fillRect(0, 0, layout.width, layout.height);
 
-  // 绘制顺序：标题、二维码、图纸、色号清单
-  drawPosterHeader(layout);
-  await drawPosterQRCode(layout); // 二维码在右上角
+  // 绘制顺序：顶部信息（二维码+标题）、图纸、色号清单
+  await drawPosterQRCode(layout); // 二维码在左上角
+  drawPosterHeader(layout); // 标题信息（拼豆魔法工坊、品牌、数量）
   await drawPosterImage(snapshotPath, layout);
   drawPosterBOM(layout, items); // 密集排列的色号清单
   
@@ -2501,12 +2562,31 @@ async function drawPoster(snapshotPath: string, layout: PosterLayout, items: BOM
 function drawPosterHeader(layout: PosterLayout) {
   if (!posterCtx) return;
   posterCtx.save();
-  // 标题在左侧
+  
+  // 二维码在左上角，标题信息在二维码右侧
+  const qrCodeRight = (layout.qrCodeX || 0) + layout.qrCodeSize;
+  const textStartX = qrCodeRight + 20; // 二维码右侧20px开始
+  
+  // 计算二维码的中心Y坐标，使文字与二维码垂直居中对齐
+  const qrCodeCenterY = layout.qrCodeY + layout.qrCodeSize / 2;
+  const textY = qrCodeCenterY; // 文字Y坐标与二维码中心对齐
+  
+  // 绘制"拼豆魔法工坊"
   posterCtx.fillStyle = '#6C5CE7';
-  posterCtx.font = '700 48px "PingFang SC","Helvetica Neue",sans-serif';
+  posterCtx.font = '700 36px "PingFang SC","Helvetica Neue",sans-serif';
   posterCtx.textAlign = 'left';
   posterCtx.textBaseline = 'middle';
-  posterCtx.fillText('拼豆魔法工坊', layout.padding, layout.titleY);
+  posterCtx.fillText('拼豆魔法工坊', textStartX, textY);
+  
+  // 测量"拼豆魔法工坊"的宽度
+  const titleWidth = posterCtx.measureText('拼豆魔法工坊').width;
+  
+  // 绘制品牌和数量（例如：Mard（1642））
+  const brandText = `${brandInfo.value?.displayName || 'Mard'}（${totalBeads.value}）`;
+  posterCtx.fillStyle = '#636E72';
+  posterCtx.font = '500 28px "PingFang SC","Helvetica Neue",sans-serif';
+  posterCtx.fillText(brandText, textStartX + titleWidth + 12, textY);
+  
   posterCtx.restore();
 }
 
@@ -2516,12 +2596,7 @@ function drawPosterWorkInfo(layout: PosterLayout) {
   
   const infoItems: Array<{ label: string; value: string }> = [];
   
-  if (workName.value.trim()) {
-    infoItems.push({ label: '作品', value: workName.value.trim() });
-  }
-  if (authorName.value.trim()) {
-    infoItems.push({ label: '作者', value: authorName.value.trim() });
-  }
+  // 移除作品名称和作者名称，只保留品牌和尺寸
   infoItems.push({ label: '品牌', value: brandInfo.value?.displayName || '--' });
   infoItems.push({ label: '尺寸', value: `${gridWidth.value}×${gridHeight.value}` });
   
@@ -2626,74 +2701,292 @@ function drawPosterMeta(layout: PosterLayout) {
 async function drawPosterImage(snapshotPath: string, layout: PosterLayout) {
   if (!posterCtx || !posterCanvas) return;
   const image = await createPosterImage(snapshotPath);
-  drawRoundedRect(posterCtx, layout.image.x - 6, layout.image.y - 6, layout.image.width + 12, layout.image.height + 12, 28, '#f5f7f7');
+  
+  // 计算每个格子的尺寸（基于实际图纸尺寸和网格尺寸）
+  const cellWidth = layout.image.width / gridWidth.value;
+  const cellHeight = layout.image.height / gridHeight.value;
+  
+  // 坐标格子尺寸（与格子大小一致）
+  const labelCellSize = layout.labelAreaSize || Math.max(cellWidth, cellHeight); // 坐标格子大小
+  const labelFontSize = Math.min(cellWidth, cellHeight) * 0.5; // 字体大小，约为格子大小的50%
+  
+  // 绘制图纸背景（扩展到包含坐标格子区域）
+  const bgPadding = 6;
+  const bgX = layout.image.x - labelCellSize - bgPadding;
+  const bgY = layout.image.y - labelCellSize - bgPadding;
+  const bgWidth = layout.image.width + labelCellSize * 2 + bgPadding * 2;
+  const bgHeight = layout.image.height + labelCellSize * 2 + bgPadding * 2;
+  drawRoundedRect(posterCtx, bgX, bgY, bgWidth, bgHeight, 28, '#f5f7f7');
+  
+  // 绘制图纸
   posterCtx.drawImage(image, layout.image.x, layout.image.y, layout.image.width, layout.image.height);
+  
+  // 先绘制坐标格子（紫色背景白色字体），网格线会绘制在上面
+  posterCtx.save();
+  const labelBgColor = '#6C5CE7'; // 紫色背景
+  const labelTextColor = '#FFFFFF'; // 白色字体
+  
+  // 上方列号坐标格子（从左到右：1, 2, 3...）
+  for (let col = 0; col < gridWidth.value; col++) {
+    const cellX = layout.image.x + col * cellWidth;
+    const cellY = layout.image.y - labelCellSize;
+    
+    // 绘制紫色背景方格
+    posterCtx.fillStyle = labelBgColor;
+    posterCtx.fillRect(cellX, cellY, cellWidth, labelCellSize);
+    
+    // 绘制白色数字（粗体）
+    posterCtx.fillStyle = labelTextColor;
+    posterCtx.font = `700 ${labelFontSize}px "PingFang SC","Helvetica Neue",sans-serif`;
+    posterCtx.textAlign = 'center';
+    posterCtx.textBaseline = 'middle';
+    posterCtx.fillText((col + 1).toString(), cellX + cellWidth / 2, cellY + labelCellSize / 2);
+  }
+  
+  // 下方列号坐标格子（从左到右：1, 2, 3...）
+  for (let col = 0; col < gridWidth.value; col++) {
+    const cellX = layout.image.x + col * cellWidth;
+    const cellY = layout.image.y + layout.image.height;
+    
+    // 绘制紫色背景方格
+    posterCtx.fillStyle = labelBgColor;
+    posterCtx.fillRect(cellX, cellY, cellWidth, labelCellSize);
+    
+    // 绘制白色数字（粗体）
+    posterCtx.fillStyle = labelTextColor;
+    posterCtx.font = `700 ${labelFontSize}px "PingFang SC","Helvetica Neue",sans-serif`;
+    posterCtx.fillText((col + 1).toString(), cellX + cellWidth / 2, cellY + labelCellSize / 2);
+  }
+  
+  // 左侧行号坐标格子（从上到下：1, 2, 3...）
+  for (let row = 0; row < gridHeight.value; row++) {
+    const cellX = layout.image.x - labelCellSize;
+    const cellY = layout.image.y + row * cellHeight;
+    
+    // 绘制紫色背景方格
+    posterCtx.fillStyle = labelBgColor;
+    posterCtx.fillRect(cellX, cellY, labelCellSize, cellHeight);
+    
+    // 绘制白色数字（粗体）
+    posterCtx.fillStyle = labelTextColor;
+    posterCtx.font = `700 ${labelFontSize}px "PingFang SC","Helvetica Neue",sans-serif`;
+    posterCtx.fillText((row + 1).toString(), cellX + labelCellSize / 2, cellY + cellHeight / 2);
+  }
+  
+  // 右侧行号坐标格子（从上到下：1, 2, 3...）
+  for (let row = 0; row < gridHeight.value; row++) {
+    const cellX = layout.image.x + layout.image.width;
+    const cellY = layout.image.y + row * cellHeight;
+    
+    // 绘制紫色背景方格
+    posterCtx.fillStyle = labelBgColor;
+    posterCtx.fillRect(cellX, cellY, labelCellSize, cellHeight);
+    
+    // 绘制白色数字（粗体）
+    posterCtx.fillStyle = labelTextColor;
+    posterCtx.font = `700 ${labelFontSize}px "PingFang SC","Helvetica Neue",sans-serif`;
+    posterCtx.fillText((row + 1).toString(), cellX + labelCellSize / 2, cellY + cellHeight / 2);
+  }
+  
+  // 绘制四个角的格子（不写数字）
+  // 左上角
+  posterCtx.fillStyle = labelBgColor;
+  posterCtx.fillRect(
+    layout.image.x - labelCellSize,
+    layout.image.y - labelCellSize,
+    labelCellSize,
+    labelCellSize
+  );
+  
+  // 右上角
+  posterCtx.fillRect(
+    layout.image.x + layout.image.width,
+    layout.image.y - labelCellSize,
+    labelCellSize,
+    labelCellSize
+  );
+  
+  // 左下角
+  posterCtx.fillRect(
+    layout.image.x - labelCellSize,
+    layout.image.y + layout.image.height,
+    labelCellSize,
+    labelCellSize
+  );
+  
+  // 右下角
+  posterCtx.fillRect(
+    layout.image.x + layout.image.width,
+    layout.image.y + layout.image.height,
+    labelCellSize,
+    labelCellSize
+  );
+  
+  posterCtx.restore();
+  
+  // 绘制网格线（深灰色细线，每隔5格粗黑线）
+  // 网格线覆盖整个区域：图纸 + 坐标格子
+  const gridStartX = layout.image.x - labelCellSize; // 包含左侧坐标格子
+  const gridStartY = layout.image.y - labelCellSize; // 包含上方坐标格子
+  const gridEndX = layout.image.x + layout.image.width + labelCellSize; // 包含右侧坐标格子
+  const gridEndY = layout.image.y + layout.image.height + labelCellSize; // 包含下方坐标格子
+  
+  posterCtx.save();
+  
+  // 绘制垂直线（列线）
+  for (let col = 0; col <= gridWidth.value; col++) {
+    const lineX = layout.image.x + col * cellWidth;
+    const isThickLine = col % 5 === 0; // 每隔5格使用粗线
+    
+    posterCtx.strokeStyle = isThickLine ? '#000000' : '#636E72'; // 粗线黑色，细线深灰色
+    posterCtx.lineWidth = isThickLine ? 2 : 1; // 粗线2px，细线1px
+    posterCtx.beginPath();
+    posterCtx.moveTo(lineX, gridStartY);
+    posterCtx.lineTo(lineX, gridEndY);
+    posterCtx.stroke();
+  }
+  
+  // 绘制水平线（行线）
+  for (let row = 0; row <= gridHeight.value; row++) {
+    const lineY = layout.image.y + row * cellHeight;
+    const isThickLine = row % 5 === 0; // 每隔5格使用粗线
+    
+    posterCtx.strokeStyle = isThickLine ? '#000000' : '#636E72'; // 粗线黑色，细线深灰色
+    posterCtx.lineWidth = isThickLine ? 2 : 1; // 粗线2px，细线1px
+    posterCtx.beginPath();
+    posterCtx.moveTo(gridStartX, lineY);
+    posterCtx.lineTo(gridEndX, lineY);
+    posterCtx.stroke();
+  }
+  
+  // 绘制坐标格子区域的网格线
+  // 上方坐标格子的垂直线
+  for (let col = 0; col <= gridWidth.value; col++) {
+    const lineX = layout.image.x + col * cellWidth;
+    const isThickLine = col % 5 === 0;
+    
+    posterCtx.strokeStyle = isThickLine ? '#000000' : '#636E72';
+    posterCtx.lineWidth = isThickLine ? 2 : 1;
+    posterCtx.beginPath();
+    posterCtx.moveTo(lineX, layout.image.y - labelCellSize);
+    posterCtx.lineTo(lineX, layout.image.y);
+    posterCtx.stroke();
+  }
+  
+  // 下方坐标格子的垂直线
+  for (let col = 0; col <= gridWidth.value; col++) {
+    const lineX = layout.image.x + col * cellWidth;
+    const isThickLine = col % 5 === 0;
+    
+    posterCtx.strokeStyle = isThickLine ? '#000000' : '#636E72';
+    posterCtx.lineWidth = isThickLine ? 2 : 1;
+    posterCtx.beginPath();
+    posterCtx.moveTo(lineX, layout.image.y + layout.image.height);
+    posterCtx.lineTo(lineX, layout.image.y + layout.image.height + labelCellSize);
+    posterCtx.stroke();
+  }
+  
+  // 左侧坐标格子的水平线
+  for (let row = 0; row <= gridHeight.value; row++) {
+    const lineY = layout.image.y + row * cellHeight;
+    const isThickLine = row % 5 === 0;
+    
+    posterCtx.strokeStyle = isThickLine ? '#000000' : '#636E72';
+    posterCtx.lineWidth = isThickLine ? 2 : 1;
+    posterCtx.beginPath();
+    posterCtx.moveTo(layout.image.x - labelCellSize, lineY);
+    posterCtx.lineTo(layout.image.x, lineY);
+    posterCtx.stroke();
+  }
+  
+  // 右侧坐标格子的水平线
+  for (let row = 0; row <= gridHeight.value; row++) {
+    const lineY = layout.image.y + row * cellHeight;
+    const isThickLine = row % 5 === 0;
+    
+    posterCtx.strokeStyle = isThickLine ? '#000000' : '#636E72';
+    posterCtx.lineWidth = isThickLine ? 2 : 1;
+    posterCtx.beginPath();
+    posterCtx.moveTo(layout.image.x + layout.image.width, lineY);
+    posterCtx.lineTo(layout.image.x + layout.image.width + labelCellSize, lineY);
+    posterCtx.stroke();
+  }
+  
+  posterCtx.restore();
 }
 
 function drawPosterBOM(layout: PosterLayout, items: BOMItem[]) {
   if (!posterCtx) return;
-  const cardWidth = layout.width - layout.padding * 2;
+  const cardWidth = layout.width; // 全屏宽度，不留左右边距
   let currentY = layout.bomStartY;
   posterCtx.save();
   
-  // 标题区域 - 紫色背景白色字体
-  const titleHeight = 56; // 标题区域高度
-  const titlePadding = 20; // 标题左右内边距
-  const titleRadius = 12; // 圆角半径
-  const titleY = currentY - titleHeight / 2; // 标题区域的顶部Y坐标
-  
-  // 绘制紫色背景（圆角矩形）
-  drawRoundedRect(posterCtx, layout.padding, titleY, cardWidth, titleHeight, titleRadius, '#6C5CE7');
-  
-  // 绘制标题文字（白色）
-  posterCtx.font = '600 32px "PingFang SC","Helvetica Neue",sans-serif';
-  posterCtx.fillStyle = '#FFFFFF';
-  posterCtx.textAlign = 'left';
-  posterCtx.textBaseline = 'middle';
-  posterCtx.fillText('拼豆清单', layout.padding + titlePadding, currentY);
-  
-  // 绘制统计信息（白色，右侧对齐）
-  posterCtx.font = '400 24px "PingFang SC","Helvetica Neue",sans-serif';
-  posterCtx.fillStyle = '#FFFFFF';
-  posterCtx.textAlign = 'right';
-  posterCtx.fillText(`共 ${totalBeads.value} 颗 / ${uniqueColorCount.value} 色`, layout.width - layout.padding - titlePadding, currentY);
-  
-  currentY += titleHeight / 2 + 12; // 标题高度的一半 + 与内容的间距（压缩）
-
-  // 密集排列：每行尽可能多的颜色，每个色号项约110px宽
-  const itemWidth = 110; // 每个色号项的宽度
+  // 使用圆角矩形显示色号和数量
+  const itemHeight = 50; // 每个色号项的高度
   const itemGap = 12; // 色号项之间的间距
-  const maxItemsPerRow = Math.floor((cardWidth) / (itemWidth + itemGap)); // 计算每行能放多少个
+  const borderRadius = 8; // 圆角半径
+  
+  // 计算每个色号项的宽度（根据文字内容动态计算）
+  posterCtx.font = '500 22px "PingFang SC","Helvetica Neue",sans-serif';
+  let maxItemWidth = 0;
+  items.forEach(item => {
+    const text = `${item.color.name}(${item.count})`;
+    const textWidth = posterCtx.measureText(text).width;
+    const itemWidth = textWidth + 32; // 文字宽度 + 左右内边距（各16px）
+    maxItemWidth = Math.max(maxItemWidth, itemWidth);
+  });
+  
+  // 限制最大和最小宽度，确保美观
+  const minItemWidth = 100;
+  const maxItemWidthLimit = 180;
+  const itemWidth = Math.max(minItemWidth, Math.min(maxItemWidth, maxItemWidthLimit));
+  
+  const maxItemsPerRow = Math.floor(cardWidth / (itemWidth + itemGap)); // 计算每行能放多少个
   
   for (let row = 0; row < Math.ceil(items.length / maxItemsPerRow); row++) {
-    const rowY = currentY + row * layout.bomRowHeight;
+    const rowY = currentY + row * (itemHeight + itemGap);
     
     for (let col = 0; col < maxItemsPerRow; col++) {
       const idx = row * maxItemsPerRow + col;
       if (idx >= items.length) break;
       
       const item = items[idx];
-      const itemX = layout.padding + col * (itemWidth + itemGap);
+      // 居中排列：计算起始位置使内容居中
+      const totalContentWidth = maxItemsPerRow * itemWidth + (maxItemsPerRow - 1) * itemGap;
+      const startX = (layout.width - totalContentWidth) / 2;
+      const itemX = startX + col * (itemWidth + itemGap);
+      const itemY = rowY;
       
-      // 绘制颜色圆圈（缩小）
-      const circleX = itemX + 20;
-      const circleY = rowY + layout.bomRowHeight / 2;
-      const circleRadius = 14; // 缩小圆圈
-      posterCtx.fillStyle = item.color.hex;
-      posterCtx.beginPath();
-      posterCtx.arc(circleX, circleY, circleRadius, 0, Math.PI * 2);
-      posterCtx.fill();
+      // 绘制圆角矩形背景（使用对应颜色）
+      drawRoundedRect(posterCtx, itemX, itemY, itemWidth, itemHeight, borderRadius, item.color.hex);
       
-      // 绘制颜色名称和数量（紧凑排列）
-      posterCtx.fillStyle = '#2d3436';
+      // 使用对比色（深色背景配白字，浅色背景配黑字）
+      const textColor = getContrastColor(item.color.hex);
+      posterCtx.fillStyle = textColor;
+      posterCtx.textBaseline = 'middle';
+      posterCtx.font = '500 22px "PingFang SC","Helvetica Neue",sans-serif';
+      
+      // 绘制色号和数量，中间保持一点距离
+      const centerX = itemX + itemWidth / 2;
+      const centerY = itemY + itemHeight / 2;
+      const spacing = 6; // 色号和数量之间的间距
+      
+      // 测量文字宽度
+      const nameText = item.color.name;
+      const countText = `(${item.count})`;
+      const nameWidth = posterCtx.measureText(nameText).width;
+      const countWidth = posterCtx.measureText(countText).width;
+      
+      // 计算起始位置，使整体居中
+      const totalTextWidth = nameWidth + spacing + countWidth;
+      const textStartX = centerX - totalTextWidth / 2;
+      
+      // 绘制色号
       posterCtx.textAlign = 'left';
-      posterCtx.font = '500 20px "PingFang SC","Helvetica Neue",sans-serif';
-      posterCtx.fillText(item.color.name, circleX + 22, circleY - 6);
+      posterCtx.fillText(nameText, textStartX, centerY);
       
-      // 绘制数量
-      posterCtx.fillStyle = '#6C5CE7';
-      posterCtx.font = '600 18px "PingFang SC","Helvetica Neue",sans-serif';
-      posterCtx.fillText(`${item.count}颗`, circleX + 22, circleY + 12);
+      // 绘制数量（在色号右侧，保持间距）
+      posterCtx.fillText(countText, textStartX + nameWidth + spacing, centerY);
     }
   }
 
@@ -2811,7 +3104,7 @@ async function drawPosterQRCode(layout: PosterLayout) {
     }
     
     // 根据图片原始尺寸计算显示尺寸，保持宽高比
-    // 二维码在右上角，尺寸固定为 layout.qrCodeSize
+    // 二维码在左上角，尺寸固定为 layout.qrCodeSize
     const qrSize = layout.qrCodeSize;
     const imageAspectRatio = imageInfo.width / imageInfo.height;
     let displayWidth = qrSize;
@@ -2823,8 +3116,8 @@ async function drawPosterQRCode(layout: PosterLayout) {
       displayWidth = qrSize * imageAspectRatio;
     }
     
-    // 计算右上角位置
-    const qrX = layout.qrCodeX || (layout.width - layout.padding - displayWidth);
+    // 计算左上角位置
+    const qrX = layout.qrCodeX || 0;
     const qrY = layout.qrCodeY;
     
     // 直接绘制图片，无边框和阴影，融入整体设计
